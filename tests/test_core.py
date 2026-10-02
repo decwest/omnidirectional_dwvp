@@ -129,3 +129,39 @@ def test_shared_plugin_fixtures():
         np.testing.assert_allclose(lo,item['expected_min'],atol=1e-9)
         np.testing.assert_allclose(hi,item['expected_max'],atol=1e-9)
         np.testing.assert_allclose(cmd,item['expected_command'],atol=1e-9)
+
+
+def test_segment_projection_and_yaw_share_same_location():
+    from omnidirectional_dwvp.metrics import project_reference
+    path=np.array([[0.,0.,0.],[2.,0.,np.pi/2]])
+    poses=np.array([[.5,.2,np.pi/8],[1.,-.3,np.pi/4]])
+    reference,error,yaw_error,segment,fraction=project_reference(poses,path)
+    np.testing.assert_allclose(reference[:,:2],[[.5,0.],[1.,0.]])
+    np.testing.assert_allclose(error,[.2,.3])
+    np.testing.assert_allclose(yaw_error,0.,atol=1e-12)
+    np.testing.assert_array_equal(segment,[0,0])
+    np.testing.assert_allclose(fraction,[.25,.5])
+
+
+def test_segment_yaw_wrap_and_duplicate_points():
+    from omnidirectional_dwvp.metrics import project_reference
+    path=np.array([[0.,0.,np.deg2rad(170.)],[2.,0.,np.deg2rad(-170.)]])
+    poses=np.array([[1.,.1,np.pi]])
+    reference,error,yaw_error,_,_=project_reference(poses,path)
+    assert abs(abs(reference[0,2])-np.pi)<1e-12
+    np.testing.assert_allclose(yaw_error,0.,atol=1e-12)
+    duplicate=np.vstack((path[0],path))
+    assert np.all(np.isfinite(project_reference(poses,duplicate)[0]))
+
+
+def test_cached_trial_reuses_only_identical_specification(tmp_path,monkeypatch):
+    from omnidirectional_dwvp import studies
+    c=replace(Config(),timeout=.1)
+    path=make_paths()['constant_heading_corner']
+    first,_,_=studies.run_trial(tmp_path,'p',path,'dwvp',c)
+    def should_not_run(*args,**kwargs): raise RuntimeError('unexpected recalculation')
+    monkeypatch.setattr(studies,'simulate',should_not_run)
+    second,_,_=studies.run_trial(tmp_path,'p',path,'dwvp',c)
+    assert first==second
+    with pytest.raises(RuntimeError,match='recalculation'):
+        studies.run_trial(tmp_path,'p',path,'dwvp',replace(c,lookahead_time=2.))

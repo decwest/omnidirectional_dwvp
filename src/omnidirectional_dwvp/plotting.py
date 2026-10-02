@@ -85,7 +85,7 @@ def obstacle_figures(out,path,results,obstacles,config):
             ax.add_patch(Circle((obstacle.x,obstacle.y),obstacle.radius+config.robot_radius,fill=False,ec="#777777",ls=":"))
         ax.add_patch(Circle((0,0),config.robot_radius,fill=False,ec="black",lw=.8))
         ax.set_aspect("equal",adjustable="box")
-        ax.set(title=method.upper(),xlabel="x [m]",ylabel="y [m]",xlim=(-.28,1.7),ylim=(-.7,1.28))
+        ax.set(title=method.upper(),xlabel="x [m]",ylabel="y [m]",xlim=(-.28,1.8),ylim=(-.82,1.28))
         ax.grid(alpha=.2)
     handles,labels=axes[0].get_legend_handles_labels()
     fig.legend(handles,labels,loc="outside upper center",ncol=2,frameon=False)

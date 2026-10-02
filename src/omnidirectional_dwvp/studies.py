@@ -36,6 +36,16 @@ def code_hash():
     return digest.hexdigest()
 
 
+def cpu_model():
+    try:
+        for line in Path("/proc/cpuinfo").read_text().splitlines():
+            if line.startswith("model name"):
+                return line.split(":",1)[1].strip()
+    except OSError:
+        pass
+    return platform.processor() or "unknown"
+
+
 def sha(data): return hashlib.sha256(canonical_json(data).encode()).hexdigest()
 
 
@@ -98,7 +108,7 @@ def execute(study, output, config, seed=0, force=False):
     source_hash = code_hash()
     manifest = dict(schema_version=1, package="omnidirectional-dwvp", source_sha256=source_hash,
                     git_revision=git_revision(), python=sys.version.split()[0], numpy=np.__version__,
-                    platform=platform.platform(), seed=seed, config=asdict(config),
+                    platform=platform.platform(), cpu_model=cpu_model(), seed=seed, config=asdict(config),
                     notes=["Deterministic kinematics; no stochastic noise in canonical studies.",
                            "VP and DWVP use identical regulated reachable boxes and downstream clipping.",
                            "Wall-clock timing is nondeterministic and stored separately.",

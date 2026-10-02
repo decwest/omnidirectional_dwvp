@@ -17,7 +17,7 @@ class Config:
     ax: float = 0.22
     ay: float = 0.22
     aw: float = 0.60
-    desired_linear_vel: float = 0.22
+    desired_linear_vel: float = 0.32
     lookahead_min: float = 0.11
     lookahead_max: float = 0.33
     lookahead_time: float = 1.5
@@ -30,7 +30,7 @@ class Config:
     cost_scaling_dist: float = 0.60
     cost_scaling_gain: float = 1.0
     regulated_min_speed: float = 0.05
-    approach_distance: float = 0.30
+    approach_distance: float = 0.60
     min_approach_speed: float = 0.05
     robot_radius: float = 0.22
     inflation_radius: float = 0.70

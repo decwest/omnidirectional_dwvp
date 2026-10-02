@@ -4,6 +4,7 @@ from time import perf_counter_ns
 import math
 import numpy as np
 from .config import Config
+from .metrics import project_reference
 from .controller import compute_command, dynamic_box
 from .geometry import integrate, wrap, surface_distance, swept_clearance
 
@@ -72,11 +73,7 @@ def simulate(path, method="dwvp", config=Config(), obstacles=(), seed=0):
     applied = np.asarray(applied).reshape((-1, 3))
     commands = np.asarray(commands).reshape((-1, 3))
     demands = np.asarray(demands).reshape((-1, 3))
-    # Nearest sampled reference pose, including its independently specified yaw.
-    nearest = np.concatenate([np.argmin(np.sum((positions[i:i+256, None, :2] - path[None, :, :2])**2, axis=2), axis=1)
-                              for i in range(0, len(positions), 256)])
-    errors = np.linalg.norm(positions[:, :2] - path[nearest, :2], axis=1)
-    yaw_errors = np.abs(wrap(positions[:, 2] - path[nearest, 2]))
+    reference, errors, yaw_errors, reference_segment, reference_fraction = project_reference(positions, path)
     acceleration = np.diff(np.vstack((np.zeros(3), applied)), axis=0) / config.dt
     jerk = np.diff(np.vstack((np.zeros(3), acceleration)), axis=0) / config.dt
     angle = _direction_angles(demands, applied, config.axis_scale)
@@ -84,7 +81,8 @@ def simulate(path, method="dwvp", config=Config(), obstacles=(), seed=0):
                   demands=demands, boxes=np.asarray(boxes), speed_caps=np.asarray(caps), lookahead=np.asarray(looks),
                   modes=np.asarray(modes), times=np.arange(len(positions))*config.dt,
                   clearance=np.asarray(clearances), direction_angle_deg=angle,
-                  position_errors=errors, yaw_errors=yaw_errors)
+                  position_errors=errors, yaw_errors=yaw_errors, reference_poses=reference,
+                  reference_segment=reference_segment, reference_fraction=reference_fraction)
     finite_angle = angle[np.isfinite(angle)]
     metrics = dict(success=reached, timeout=not reached, steps=len(applied), duration_s=len(applied)*config.dt,
                    first_goal_time_s=first_reach, travel_time_s=len(applied)*config.dt if reached else None,
