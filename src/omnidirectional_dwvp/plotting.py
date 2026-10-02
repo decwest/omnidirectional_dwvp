@@ -130,8 +130,9 @@ def sweep_figures(out,rows):
                     failed=[r for r in selected if not r["success"]]
                     if failed: ax.scatter([r["value"] for r in failed],[r[metric] for r in failed],marker="x",s=55,c="black",zorder=5)
                     ax.set_ylabel(label)
-                    if metric != "min_clearance_m": ax.set_ylim(bottom=0)
                     ax.grid(alpha=.2)
+            for ax,metric in zip(axes[:,col],metrics):
+                if metric != "min_clearance_m": ax.set_ylim(bottom=0)
             axes[-1,col].set_xlabel(xlabel)
         fig.legend(*axes[0,0].get_legend_handles_labels(),loc="outside upper center",ncol=2,frameon=False)
         save(fig,out/parameter)
