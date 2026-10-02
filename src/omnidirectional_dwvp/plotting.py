@@ -14,6 +14,10 @@ plt.rcParams.update({"font.family":"DejaVu Sans", "font.size":9, "axes.labelsize
 
 
 def save(fig, stem):
+    # Freeze layout before either renderer; Matplotlib's constrained-layout
+    # outside legends can otherwise crop labels differently in PDF and PNG.
+    top = 1.0 - .55 / fig.get_size_inches()[1] if fig.legends else 1.0
+    fig.tight_layout(rect=(0., 0., 1., top))
     fig.savefig(str(stem)+".pdf", bbox_inches="tight")
     fig.savefig(str(stem)+".png", dpi=180, bbox_inches="tight")
     plt.close(fig)
@@ -26,7 +30,7 @@ def arrows(ax, poses, color):
 
 
 def mechanism_figures(out, paths, results):
-    fig, axes=plt.subplots(2,2,figsize=(7.2,6.3), constrained_layout=True)
+    fig, axes=plt.subplots(2,2,figsize=(7.2,6.3), constrained_layout=False)
     for ax,(name,path) in zip(axes.flat,paths.items()):
         ax.plot(path[:,0],path[:,1],"k--",lw=1,label="Reference")
         for method in ("vp_min","vp_max","vp","dwvp"):
@@ -40,9 +44,9 @@ def mechanism_figures(out, paths, results):
         ax.set_aspect("equal",adjustable="box")
         ax.grid(alpha=.2)
     handles,labels=axes.flat[0].get_legend_handles_labels()
-    fig.legend(handles,labels,loc="outside upper center",ncol=5,frameon=False)
+    fig.legend(handles,labels,loc="upper center",ncol=5,frameon=False)
     save(fig,out/"tracking")
-    fig,axes=plt.subplots(4,2,figsize=(7.2,8.5),constrained_layout=True)
+    fig,axes=plt.subplots(4,2,figsize=(7.2,8.5),constrained_layout=False)
     for col,name in enumerate(("iros_docking","independent_heading_curve")):
         for method in ("vp","dwvp"):
             a=results[(name,method)].arrays
@@ -58,7 +62,7 @@ def mechanism_figures(out, paths, results):
             ax.grid(alpha=.2)
         axes[-1,col].set_xlabel("Time [s]")
     save(fig,out/"velocity_and_direction")
-    fig,axes=plt.subplots(1,3,figsize=(7.2,2.9),constrained_layout=True)
+    fig,axes=plt.subplots(1,3,figsize=(7.2,2.9),constrained_layout=False)
     names=list(paths)
     for ax,metric,label in zip(axes,("mean_position_error_m","mean_heading_error_deg","duration_s"),
                               ("Mean position error [m]","Mean heading error [deg]","Duration [s]")):
@@ -74,7 +78,7 @@ def mechanism_figures(out, paths, results):
 def obstacle_figures(out,path,results,obstacles,config):
     selected=("no_cost_no_approach","cost_no_approach","no_cost_approach","cost_approach")
     colors=("#7b8c96","#e69f00","#009e73","#c44e52")
-    fig,axes=plt.subplots(1,2,figsize=(7.2,3.5),constrained_layout=True)
+    fig,axes=plt.subplots(1,2,figsize=(7.2,3.5),constrained_layout=False)
     for ax,method in zip(axes,("vp","dwvp")):
         ax.plot(path[:,0],path[:,1],"k--",label="Reference")
         for label,color in zip(selected,colors):
@@ -88,9 +92,9 @@ def obstacle_figures(out,path,results,obstacles,config):
         ax.set(title=method.upper(),xlabel="x [m]",ylabel="y [m]",xlim=(-.28,1.8),ylim=(-.82,1.28))
         ax.grid(alpha=.2)
     handles,labels=axes[0].get_legend_handles_labels()
-    fig.legend(handles,labels,loc="outside upper center",ncol=2,frameon=False)
+    fig.legend(handles,labels,loc="upper center",ncol=2,frameon=False)
     save(fig,out/"scene")
-    fig,axes=plt.subplots(3,2,figsize=(7.2,6.1),constrained_layout=True)
+    fig,axes=plt.subplots(3,2,figsize=(7.2,6.1),constrained_layout=False)
     for col,method in enumerate(("vp","dwvp")):
         for label,color in zip(selected,colors):
             a=results[(label,method)].arrays
@@ -104,7 +108,7 @@ def obstacle_figures(out,path,results,obstacles,config):
             ax.set_ylabel(label)
             ax.grid(alpha=.2)
         axes[-1,col].set_xlabel("Time [s]")
-    fig.legend(*axes[0,0].get_legend_handles_labels(),loc="outside upper center",ncol=2,frameon=False)
+    fig.legend(*axes[0,0].get_legend_handles_labels(),loc="upper center",ncol=2,frameon=False)
     save(fig,out/"regulation")
 
 
@@ -113,7 +117,7 @@ def sweep_figures(out,rows):
     for parameter in parameters:
         subset=[r for r in rows if r["parameter"]==parameter]
         path_names=list(dict.fromkeys(r["path"] for r in subset))
-        fig,axes=plt.subplots(3,len(path_names),figsize=(max(3.8,2.6*len(path_names)),6.8),squeeze=False,constrained_layout=True)
+        fig,axes=plt.subplots(3,len(path_names),figsize=(max(3.8,2.6*len(path_names)),6.8),squeeze=False,constrained_layout=False)
         cost_study=parameter.startswith("cost_")
         metrics=("mean_position_error_m","min_clearance_m" if cost_study else "mean_heading_error_deg","duration_s")
         labels=("Mean position error [m]","Min. clearance [m]" if cost_study else "Mean heading error [deg]","Duration [s]")
@@ -134,5 +138,5 @@ def sweep_figures(out,rows):
             for ax,metric in zip(axes[:,col],metrics):
                 if metric != "min_clearance_m": ax.set_ylim(bottom=0)
             axes[-1,col].set_xlabel(xlabel)
-        fig.legend(*axes[0,0].get_legend_handles_labels(),loc="outside upper center",ncol=2,frameon=False)
+        fig.legend(*axes[0,0].get_legend_handles_labels(),loc="upper center",ncol=2,frameon=False)
         save(fig,out/parameter)

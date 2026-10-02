@@ -165,3 +165,25 @@ def test_cached_trial_reuses_only_identical_specification(tmp_path,monkeypatch):
     assert first==second
     with pytest.raises(RuntimeError,match='recalculation'):
         studies.run_trial(tmp_path,'p',path,'dwvp',replace(c,lookahead_time=2.))
+
+
+def test_sweep_axes_include_both_controllers(tmp_path,monkeypatch):
+    from omnidirectional_dwvp import plotting
+    import matplotlib.pyplot as plt
+    inspected=[]
+    def inspect_figure(fig,stem):
+        for ax in fig.axes:
+            lower,upper=ax.get_ylim()
+            for line in ax.lines:
+                y=np.asarray(line.get_ydata())
+                assert np.all(y>=lower-1e-12) and np.all(y<=upper+1e-12)
+        inspected.append(stem)
+        plt.close(fig)
+    monkeypatch.setattr(plotting,'save',inspect_figure)
+    rows=[]
+    for method,scale in [('vp',1.),('dwvp',3.)]:
+        for value in (1.,2.):
+            rows.append(dict(parameter='lookahead_time',path='iros_docking',method=method,value=value,success=True,
+                             mean_position_error_m=scale*value,mean_heading_error_deg=scale*value,duration_s=scale*value))
+    plotting.sweep_figures(tmp_path,rows)
+    assert len(inspected)==1
