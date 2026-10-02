@@ -1,0 +1,11 @@
+# Scope of the generated evidence
+
+The canonical suite has 248 condition entries, corresponding to 204 distinct deterministic trajectories. Nominal settings reused across studies are not independent samples. All requested settings completed the common settled-goal criterion within 120 seconds in this run; all final commands obeyed the physical velocity and acceleration box, and neither controller collided in the specified obstacle scene.
+
+DWVP has smaller normalized direction distortion than adaptive VP clipping on the four reference paths. For the independent-heading cosine path, both mean position and heading errors are smaller with DWVP, with a longer travel time. On the constant-heading corner, adaptive VP has the smaller mean position error. Thus the data do not support a universal tracking-error or speed advantage.
+
+In the obstacle scene, cost regulation reduces speed near the obstacles, and combining cost and approach regulation lengthens the run. Clearance does not universally improve: the slower path can follow the reference more closely and approach a side obstacle more closely. Both methods already avoid collision without this regulation in the prescribed scene. These results demonstrate that the added cap affects speed while retaining physical feasibility, not a new obstacle-avoidance capability or a safety guarantee.
+
+All sweep rows are retained. Figures show error and duration against the varied parameter, with unsuccessful conditions marked if present. A separate small unit-test timeout verifies failure retention; that synthetic test is not counted among publication conditions. Timing measures the Python implementation on the recorded host and is not evidence that the ROS controller always meets its deadline.
+
+The run is noise-free and uses an ideal body-velocity plant with a circular footprint. There are no confidence intervals or statistical significance claims from deterministic repetition. New HSR experiments, wheel-level constraints, actuator lag, localization uncertainty, obstacle layouts beyond this fixed scene, and live Nav2 navigation are outside the generated simulation evidence. Actual values, configurations and code fingerprints are in `results/paper/manifest.json` and the complete CSV/JSON summaries.
