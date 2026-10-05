@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import math
 import numpy as np
 from .config import Config
+from .dwpp import optimal_velocity_in_window
 from .geometry import wrap, surface_distance
 from .solver import calc_ray_box_intersection_alpha_range, calc_closest_alpha_to_box_from_ray
 
@@ -38,7 +39,7 @@ def desired_vector(pose, target, config):
     c, s = math.cos(pose[2]), math.sin(pose[2])
     body = np.array([c * delta[0] + s * delta[1], -s * delta[0] + c * delta[1]])
     distance = float(np.linalg.norm(body))
-    speed = config.box_speed
+    speed = config.translation_speed
     translation = np.zeros(2) if distance <= 1e-6 else speed * body / distance
     time = config.min_orientation_time
     if speed > 1e-12:
@@ -46,17 +47,29 @@ def desired_vector(pose, target, config):
     return np.r_[translation, wrap(target[2] - pose[2]) / time]
 
 
-def ray_command(desired, lower, upper, accelerate):
+def ray_command(desired, lower, upper, prefer_large_alpha):
+    """Geometric selector; control always requests the largest minimizing alpha."""
     if np.linalg.norm(desired) <= 1e-12:
         return np.clip(np.zeros(3), lower, upper), "zero"
     intersects, alpha_min, alpha_max = calc_ray_box_intersection_alpha_range(desired, lower, upper)
     if intersects:
-        alpha = alpha_max if accelerate else alpha_min
+        alpha = alpha_max if prefer_large_alpha else alpha_min
         mode = "intersection"
     else:
-        alpha = calc_closest_alpha_to_box_from_ray(desired, lower, upper, accelerate)
+        alpha = calc_closest_alpha_to_box_from_ray(desired, lower, upper, prefer_large_alpha)
         mode = "projection"
     return np.clip(alpha * desired, lower, upper), mode
+
+
+def uniformly_scale(vector, lower, upper):
+    """Largest scale in [0, 1] inside a box containing zero, including zero limits."""
+    scale = 1.0
+    for value, lo, hi in zip(vector, lower, upper):
+        if value > 0:
+            scale = min(scale, hi / value)
+        elif value < 0:
+            scale = min(scale, lo / value)
+    return scale * vector
 
 
 def speed_cap(pose, path, arc, nearest, config, obstacles):
@@ -91,7 +104,7 @@ class Command:
 
 
 def compute_command(pose, current, path, arc, method, config, obstacles=()):
-    if method not in {"vp", "dwvp"}:
+    if method not in {"vp", "vp_scaled", "vp_scaled_accel", "dwvp", "dwpp"}:
         raise ValueError(f"unknown controller: {method}")
     nearest = int(np.argmin(np.sum((path[:, :2] - pose[:2])**2, axis=1)))
     lookahead = config.fixed_lookahead
@@ -117,22 +130,49 @@ def compute_command(pose, current, path, arc, method, config, obstacles=()):
     cap, obstacle_distance = speed_cap(pose, path, arc, nearest, config, obstacles)
     lower, upper = dynamic_box(current, config)
     lower, upper = regulated_box(lower, upper, cap, config)
+    if method == "dwpp":
+        lower[0] = max(0.0, lower[0])
+        lower[1] = upper[1] = 0.0
     goal_distance = float(np.linalg.norm(pose[:2] - path[-1, :2]))
     if goal_distance <= config.goal_xy or config.box_speed <= 1e-12:
-        yaw_error = float(wrap(path[-1, 2] - pose[2]))
+        goal_yaw = terminal_heading(path) if method == "dwpp" else path[-1, 2]
+        yaw_error = float(wrap(goal_yaw - pose[2]))
         target_w = 0.0 if abs(yaw_error) <= config.goal_yaw else math.copysign(
             min(abs(yaw_error) / config.min_orientation_time, math.sqrt(2 * config.aw * abs(yaw_error))), yaw_error)
         desired = np.array([0.0, 0.0, target_w])
         command = np.clip(desired, lower, upper)
         mode = "terminal"
+    elif method == "dwpp":
+        delta = target[:2] - pose[:2]
+        lateral = -math.sin(pose[2]) * delta[0] + math.cos(pose[2]) * delta[1]
+        distance2 = float(delta @ delta)
+        curvature = 2.0 * lateral / distance2 if distance2 > 0.001 else 0.0
+        v, w = optimal_velocity_in_window((upper[0], lower[0], upper[2], lower[2]), curvature)
+        desired = np.array([config.vx_max, 0.0, curvature * config.vx_max])
+        command = np.array([v, 0.0, w])
+        mode = "intersection" if abs(w - curvature * v) <= 1e-10 else "projection"
     elif method == "vp":
         command = np.clip(desired, lower, upper)
         mode = "clipping"
+    elif method in ("vp_scaled", "vp_scaled_accel"):
+        # First use only the regulated velocity box, without acceleration limits.
+        velocity_lower, velocity_upper = regulated_box(config.lower, config.upper, cap, config)
+        target = uniformly_scale(desired, velocity_lower, velocity_upper)
+        if method == "vp_scaled_accel":
+            step = config.acceleration * config.dt
+            target = current + uniformly_scale(target - current, -step, step)
+        # A sudden cap can be unreachable in one cycle; share the same reachable
+        # regulated window as VP/DWVP, including its retained braking endpoints.
+        command = np.clip(target, lower, upper)
+        mode = "scaled_acceleration" if method == "vp_scaled_accel" else "scaled_velocity"
     else:
-        speed = float(np.linalg.norm(current[:2]))
-        acceleration = min(config.ax, config.ay)
-        stopping_distance = math.inf if acceleration <= 0 else speed * speed / (2 * acceleration)
-        remaining = float(np.linalg.norm(path[nearest, :2] - pose[:2])) + arc[-1] - arc[nearest]
-        accelerate = remaining > stopping_distance
-        command, mode = ray_command(desired, lower, upper, accelerate)
+        command, mode = ray_command(desired, lower, upper, True)
     return Command(desired, command, lower, upper, cap, lookahead, nearest, mode, obstacle_distance)
+
+
+def terminal_heading(path):
+    """PP uses the final nonzero positional tangent, never the supplied yaw."""
+    for delta in np.diff(path[:, :2], axis=0)[::-1]:
+        if float(delta @ delta) > 1e-20:
+            return math.atan2(delta[1], delta[0])
+    return 0.0

@@ -1,0 +1,773 @@
+{
+  "source_repository": "decwest/dwpp",
+  "source_commit": "6e6fa05b02749b166aaaa342a05efd4989c36d52",
+  "source_file": "simulator/controllers.py",
+  "source_sha256": "4652de23dbf5f134a395ef20c0cd633dd5d7d07e8a78016eaebb43db8efd84e5",
+  "oracle": "Functions executed directly from source AST; no local port imported.",
+  "kernel_cases": [
+    {
+      "window": [
+        0.22,
+        0.0,
+        0.6,
+        -0.6
+      ],
+      "curvature": 0.0,
+      "expected": [
+        0.22,
+        0.0
+      ]
+    },
+    {
+      "window": [
+        0.22,
+        0.0,
+        0.6,
+        -0.6
+      ],
+      "curvature": 0.0009,
+      "expected": [
+        0.22,
+        0.0
+      ]
+    },
+    {
+      "window": [
+        0.22,
+        0.0,
+        0.6,
+        -0.6
+      ],
+      "curvature": 0.001,
+      "expected": [
+        0.22,
+        0.00022
+      ]
+    },
+    {
+      "window": [
+        0.22,
+        0.0,
+        0.6,
+        -0.6
+      ],
+      "curvature": -4.0,
+      "expected": [
+        0.15,
+        -0.6
+      ]
+    },
+    {
+      "window": [
+        0.22,
+        0.0,
+        0.6,
+        -0.6
+      ],
+      "curvature": 0.5,
+      "expected": [
+        0.22,
+        0.11
+      ]
+    },
+    {
+      "window": [
+        0.22,
+        0.0,
+        0.6,
+        -0.6
+      ],
+      "curvature": 10.0,
+      "expected": [
+        0.06,
+        0.6
+      ]
+    },
+    {
+      "window": [
+        0.22,
+        0.0,
+        0.6,
+        -0.6
+      ],
+      "curvature": -10.0,
+      "expected": [
+        0.06,
+        -0.6
+      ]
+    },
+    {
+      "window": [
+        0.2,
+        0.15,
+        0.1,
+        -0.1
+      ],
+      "curvature": 0.0,
+      "expected": [
+        0.2,
+        0.0
+      ]
+    },
+    {
+      "window": [
+        0.2,
+        0.15,
+        0.1,
+        -0.1
+      ],
+      "curvature": 0.0009,
+      "expected": [
+        0.2,
+        0.0
+      ]
+    },
+    {
+      "window": [
+        0.2,
+        0.15,
+        0.1,
+        -0.1
+      ],
+      "curvature": 0.001,
+      "expected": [
+        0.2,
+        0.0002
+      ]
+    },
+    {
+      "window": [
+        0.2,
+        0.15,
+        0.1,
+        -0.1
+      ],
+      "curvature": -4.0,
+      "expected": [
+        0.15,
+        -0.1
+      ]
+    },
+    {
+      "window": [
+        0.2,
+        0.15,
+        0.1,
+        -0.1
+      ],
+      "curvature": 0.5,
+      "expected": [
+        0.2,
+        0.1
+      ]
+    },
+    {
+      "window": [
+        0.2,
+        0.15,
+        0.1,
+        -0.1
+      ],
+      "curvature": 10.0,
+      "expected": [
+        0.15,
+        0.1
+      ]
+    },
+    {
+      "window": [
+        0.2,
+        0.15,
+        0.1,
+        -0.1
+      ],
+      "curvature": -10.0,
+      "expected": [
+        0.15,
+        -0.1
+      ]
+    },
+    {
+      "window": [
+        0.03,
+        0.0,
+        0.4,
+        0.3
+      ],
+      "curvature": 0.0,
+      "expected": [
+        0.03,
+        0.3
+      ]
+    },
+    {
+      "window": [
+        0.03,
+        0.0,
+        0.4,
+        0.3
+      ],
+      "curvature": 0.0009,
+      "expected": [
+        0.03,
+        0.3
+      ]
+    },
+    {
+      "window": [
+        0.03,
+        0.0,
+        0.4,
+        0.3
+      ],
+      "curvature": 0.001,
+      "expected": [
+        0.03,
+        0.3
+      ]
+    },
+    {
+      "window": [
+        0.03,
+        0.0,
+        0.4,
+        0.3
+      ],
+      "curvature": -4.0,
+      "expected": [
+        0.0,
+        0.3
+      ]
+    },
+    {
+      "window": [
+        0.03,
+        0.0,
+        0.4,
+        0.3
+      ],
+      "curvature": 0.5,
+      "expected": [
+        0.03,
+        0.3
+      ]
+    },
+    {
+      "window": [
+        0.03,
+        0.0,
+        0.4,
+        0.3
+      ],
+      "curvature": 10.0,
+      "expected": [
+        0.03,
+        0.3
+      ]
+    },
+    {
+      "window": [
+        0.03,
+        0.0,
+        0.4,
+        0.3
+      ],
+      "curvature": -10.0,
+      "expected": [
+        0.0,
+        0.3
+      ]
+    },
+    {
+      "window": [
+        0.03,
+        0.0,
+        -0.3,
+        -0.4
+      ],
+      "curvature": 0.0,
+      "expected": [
+        0.03,
+        -0.3
+      ]
+    },
+    {
+      "window": [
+        0.03,
+        0.0,
+        -0.3,
+        -0.4
+      ],
+      "curvature": 0.0009,
+      "expected": [
+        0.03,
+        -0.3
+      ]
+    },
+    {
+      "window": [
+        0.03,
+        0.0,
+        -0.3,
+        -0.4
+      ],
+      "curvature": 0.001,
+      "expected": [
+        0.03,
+        -0.3
+      ]
+    },
+    {
+      "window": [
+        0.03,
+        0.0,
+        -0.3,
+        -0.4
+      ],
+      "curvature": -4.0,
+      "expected": [
+        0.03,
+        -0.3
+      ]
+    },
+    {
+      "window": [
+        0.03,
+        0.0,
+        -0.3,
+        -0.4
+      ],
+      "curvature": 0.5,
+      "expected": [
+        0.0,
+        -0.3
+      ]
+    },
+    {
+      "window": [
+        0.03,
+        0.0,
+        -0.3,
+        -0.4
+      ],
+      "curvature": 10.0,
+      "expected": [
+        0.0,
+        -0.3
+      ]
+    },
+    {
+      "window": [
+        0.03,
+        0.0,
+        -0.3,
+        -0.4
+      ],
+      "curvature": -10.0,
+      "expected": [
+        0.03,
+        -0.3
+      ]
+    },
+    {
+      "window": [
+        0.2,
+        0.15,
+        0.4,
+        0.3
+      ],
+      "curvature": 0.0,
+      "expected": [
+        0.2,
+        0.3
+      ]
+    },
+    {
+      "window": [
+        0.2,
+        0.15,
+        0.4,
+        0.3
+      ],
+      "curvature": 0.0009,
+      "expected": [
+        0.2,
+        0.3
+      ]
+    },
+    {
+      "window": [
+        0.2,
+        0.15,
+        0.4,
+        0.3
+      ],
+      "curvature": 0.001,
+      "expected": [
+        0.2,
+        0.3
+      ]
+    },
+    {
+      "window": [
+        0.2,
+        0.15,
+        0.4,
+        0.3
+      ],
+      "curvature": -4.0,
+      "expected": [
+        0.15,
+        0.3
+      ]
+    },
+    {
+      "window": [
+        0.2,
+        0.15,
+        0.4,
+        0.3
+      ],
+      "curvature": 0.5,
+      "expected": [
+        0.2,
+        0.3
+      ]
+    },
+    {
+      "window": [
+        0.2,
+        0.15,
+        0.4,
+        0.3
+      ],
+      "curvature": 10.0,
+      "expected": [
+        0.15,
+        0.4
+      ]
+    },
+    {
+      "window": [
+        0.2,
+        0.15,
+        0.4,
+        0.3
+      ],
+      "curvature": -10.0,
+      "expected": [
+        0.15,
+        0.3
+      ]
+    },
+    {
+      "window": [
+        0.2,
+        0.15,
+        -0.3,
+        -0.4
+      ],
+      "curvature": 0.0,
+      "expected": [
+        0.2,
+        -0.3
+      ]
+    },
+    {
+      "window": [
+        0.2,
+        0.15,
+        -0.3,
+        -0.4
+      ],
+      "curvature": 0.0009,
+      "expected": [
+        0.2,
+        -0.3
+      ]
+    },
+    {
+      "window": [
+        0.2,
+        0.15,
+        -0.3,
+        -0.4
+      ],
+      "curvature": 0.001,
+      "expected": [
+        0.2,
+        -0.3
+      ]
+    },
+    {
+      "window": [
+        0.2,
+        0.15,
+        -0.3,
+        -0.4
+      ],
+      "curvature": -4.0,
+      "expected": [
+        0.15,
+        -0.4
+      ]
+    },
+    {
+      "window": [
+        0.2,
+        0.15,
+        -0.3,
+        -0.4
+      ],
+      "curvature": 0.5,
+      "expected": [
+        0.15,
+        -0.3
+      ]
+    },
+    {
+      "window": [
+        0.2,
+        0.15,
+        -0.3,
+        -0.4
+      ],
+      "curvature": 10.0,
+      "expected": [
+        0.15,
+        -0.3
+      ]
+    },
+    {
+      "window": [
+        0.2,
+        0.15,
+        -0.3,
+        -0.4
+      ],
+      "curvature": -10.0,
+      "expected": [
+        0.15,
+        -0.4
+      ]
+    }
+  ],
+  "command_cases": [
+    {
+      "pose": [
+        0.0,
+        0.1,
+        0.0
+      ],
+      "current": [
+        0.0,
+        0.0
+      ],
+      "fixed_lookahead": null,
+      "expected": [
+        0.0012099999999999978,
+        -0.02
+      ],
+      "curvature": -16.52892561983474,
+      "nearest": 0
+    },
+    {
+      "pose": [
+        0.6,
+        0.5,
+        0.2
+      ],
+      "current": [
+        0.2,
+        -0.2
+      ],
+      "fixed_lookahead": null,
+      "expected": [
+        0.19266666666666668,
+        -0.22
+      ],
+      "curvature": -3.9202663113649665,
+      "nearest": 120
+    },
+    {
+      "pose": [
+        1.0,
+        -0.05,
+        -0.1
+      ],
+      "current": [
+        0.15,
+        0.4
+      ],
+      "fixed_lookahead": null,
+      "expected": [
+        0.14266666666666666,
+        0.42000000000000004
+      ],
+      "curvature": 9.451653131875783,
+      "nearest": 200
+    },
+    {
+      "pose": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "current": [
+        0.18,
+        0.2
+      ],
+      "fixed_lookahead": null,
+      "expected": [
+        0.18733333333333332,
+        0.18000000000000002
+      ],
+      "curvature": 0.0,
+      "nearest": 200
+    },
+    {
+      "pose": [
+        3.6,
+        0.03,
+        -0.1
+      ],
+      "current": [
+        0.2,
+        0.1
+      ],
+      "fixed_lookahead": null,
+      "expected": [
+        0.19266666666666668,
+        0.08
+      ],
+      "curvature": -1.3491261470699074,
+      "nearest": 720
+    },
+    {
+      "pose": [
+        3.9,
+        0.0,
+        0.0
+      ],
+      "current": [
+        0.1,
+        0.0
+      ],
+      "fixed_lookahead": null,
+      "expected": [
+        0.09266666666666667,
+        0.0
+      ],
+      "curvature": 0.0,
+      "nearest": 780
+    },
+    {
+      "pose": [
+        0.0,
+        0.1,
+        0.0
+      ],
+      "current": [
+        0.0,
+        0.0
+      ],
+      "fixed_lookahead": 0.165,
+      "expected": [
+        0.0027225,
+        -0.02
+      ],
+      "curvature": -7.3461891643709825,
+      "nearest": 0
+    },
+    {
+      "pose": [
+        0.6,
+        0.5,
+        0.2
+      ],
+      "current": [
+        0.2,
+        -0.2
+      ],
+      "fixed_lookahead": 0.165,
+      "expected": [
+        0.19266666666666668,
+        -0.22
+      ],
+      "curvature": -3.9202663113649665,
+      "nearest": 120
+    },
+    {
+      "pose": [
+        1.0,
+        -0.05,
+        -0.1
+      ],
+      "current": [
+        0.15,
+        0.4
+      ],
+      "fixed_lookahead": 0.165,
+      "expected": [
+        0.14266666666666666,
+        0.42000000000000004
+      ],
+      "curvature": 4.807948546002825,
+      "nearest": 200
+    },
+    {
+      "pose": [
+        1.0,
+        0.0,
+        0.0
+      ],
+      "current": [
+        0.18,
+        0.2
+      ],
+      "fixed_lookahead": 0.165,
+      "expected": [
+        0.18733333333333332,
+        0.18000000000000002
+      ],
+      "curvature": 0.0,
+      "nearest": 200
+    },
+    {
+      "pose": [
+        3.6,
+        0.03,
+        -0.1
+      ],
+      "current": [
+        0.2,
+        0.1
+      ],
+      "fixed_lookahead": 0.165,
+      "expected": [
+        0.19266666666666668,
+        0.08
+      ],
+      "curvature": -1.0029144048279361,
+      "nearest": 720
+    },
+    {
+      "pose": [
+        3.9,
+        0.0,
+        0.0
+      ],
+      "current": [
+        0.1,
+        0.0
+      ],
+      "fixed_lookahead": 0.165,
+      "expected": [
+        0.09266666666666667,
+        0.0
+      ],
+      "curvature": 0.0,
+      "nearest": 780
+    }
+  ]
+}

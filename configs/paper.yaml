@@ -11,6 +11,8 @@ ax: 0.22
 ay: 0.22
 aw: 0.6
 desired_linear_vel: 0.32
+# Explicit legacy demand magnitude (diagonal of the x/y velocity box).
+vp_translation_speed: 0.3111269837220809
 lookahead_min: 0.11
 lookahead_max: 0.33
 lookahead_time: 1.5

@@ -11,10 +11,10 @@ With Python 3.10 or later and `uv`:
 ```bash
 uv sync --extra dev
 uv run pytest -q
-uv run dwvp-study all
+uv run dwvp-study legacy-all --config configs/paper.yaml --output results/legacy
 ```
 
-The complete study contains 248 condition entries: 16 mechanism comparisons, 8 obstacle/approach ablations, and 224 parameter-sweep entries. Reused nominal settings produce 204 distinct deterministic trajectories (198 distinct trajectories in the sweep entries); these are not independent repetitions. Use `dwvp-study mechanism`, `dwvp-study obstacles`, or `dwvp-study sweeps` separately. `--config configs/paper.yaml`, `--seed 0`, `--output results/paper`, and `--force` are available. A trial is reused only when its path, complete configuration, obstacles, seed and Python-source content hash match. Changing a source file invalidates cached trials. Every requested setting is retained, including any timeout or collision.
+The archived study contains 248 condition entries: 16 mechanism comparisons, 8 obstacle/approach ablations, and 224 parameter-sweep entries. Reused nominal settings produce 204 distinct deterministic trajectories (198 distinct trajectories in the sweep entries); these are not independent repetitions. Use `dwvp-study mechanism`, `dwvp-study obstacles`, or `dwvp-study sweeps` separately. `--config configs/paper.yaml`, `--seed 0`, `--output results/legacy`, and `--force` are available. A trial is reused only when its path, complete configuration, obstacles, seed and Python-source content hash match. Changing a source file invalidates cached trials. Every requested setting is retained, including any timeout or collision.
 
 The canonical configuration uses 30 Hz, physical x/y limits ±0.22 m/s, yaw limits ±0.60 rad/s, x/y acceleration limits 0.22 m/s², yaw acceleration 0.60 rad/s², desired translation speed 0.32 m/s (capped at the physical box norm, approximately 0.311 m/s; no contraction of the original ±0.22 m/s axis envelope), and adaptive lookahead 0.11–0.33 m with 1.5 s lookahead time. `dt` is calculated as `1/frequency`. The minimum orientation time is 0.20 s. No noise is added in the publication run; repeated deterministic executions are not statistical repetitions.
 
@@ -22,7 +22,7 @@ The canonical configuration uses 30 Hz, physical x/y limits ±0.22 m/s, yaw limi
 
 Both controllers receive the same desired vector, physical limits, previous applied velocity, speed regulation, and reachable box. VP projects the desired vector componentwise onto that box; DWVP solves the unweighted ray–box intersection/projection problem. Both then pass through the same physical plant clipping. Thus command-feasibility results refer to the **final feasible commands**, not the infeasible pre-projection demand. The latter is recorded separately.
 
-The reference translational speed is the norm of the physical x/y box maxima; the nominal speed and RPP-style cost/approach reductions constrain the feasible box. Scaling the desired ray alone would have no effect. Regulation scales the physical x/y intervals, intersects them with the dynamic window, and retains the nearest original dynamic endpoint if the contraction is temporarily unreachable. The yaw interval is unchanged. Transient excess over the requested regulated speed can therefore occur while all physical velocity and acceleration limits remain satisfied.
+The default reference translational speed is the minimum magnitude allowed in all positive and negative x/y directions (0.22 m/s for symmetric limits). `vp_translation_speed` overrides it; `configs/paper.yaml` explicitly preserves the old box-diagonal demand. The same magnitude defines the orientation time. The nominal speed and RPP-style cost/approach reductions constrain the feasible box. In the archived profile, the demand magnitude is the box diagonal. Scaling the desired ray alone would have no effect. Regulation scales the physical x/y intervals, intersects them with the dynamic window, and retains the nearest original dynamic endpoint if the contraction is temporarily unreachable. The yaw interval is unchanged. Transient excess over the requested regulated speed can therefore occur while all physical velocity and acceleration limits remain satisfied.
 
 Preview follows Humble Nav2 RPP's Euclidean lookahead-circle convention, interpolates x/y at the circle/segment intersection, and takes yaw from the first outer path pose. Reference yaw is supplied independently of the path tangent. Terminal control begins within the position tolerance and uses a finite yaw target with a stopping-distance limit. All methods use the same terminal behavior. Success requires position error ≤0.02 m, wrapped yaw error ≤1°, and all applied velocity components ≤0.001 in their respective units. Timeout is 120 s. Both first pose-tolerance time and settled travel time are recorded.
 
@@ -37,7 +37,7 @@ The obstacle study assumes an HSR circular footprint of radius 0.22 m. Its two c
 - Constant-heading corner: docking geometry with yaw fixed at zero.
 - Independent-heading curve: cosine geometry with yaw `pi/2*(3*s²−2*s³)`, where `s` is normalized accumulated path length. Heading evolves smoothly from 0° to 90° independently of the tangent.
 
-All trials start at zero pose and velocity. The mechanism study compares adaptive VP clipping, fixed-0.11 m VP clipping, fixed-0.33 m VP clipping, and adaptive DWVP. The primary controlled comparison is adaptive VP versus adaptive DWVP. Obstacle trials cross cost on/off with approach on/off for both methods. Sweeps cover lookahead time, fixed lookahead, acceleration scale, unequal lateral acceleration, cost distance/gain, and approach distance. Exact grids and all results are published, with no selection based on performance.
+Archived trials start at zero pose and velocity. `simulate(..., initial_pose=[x, y, yaw])` can override the initial pose; velocity still starts at zero. The mechanism study compares adaptive VP clipping, fixed-0.11 m VP clipping, fixed-0.33 m VP clipping, and adaptive DWVP. The primary controlled comparison is adaptive VP versus adaptive DWVP. Obstacle trials cross cost on/off with approach on/off for both methods. Sweeps cover lookahead time, fixed lookahead, acceleration scale, unequal lateral acceleration, cost distance/gain, and approach distance. Exact grids and all results are published, with no selection based on performance.
 
 ## Outputs
 
@@ -70,3 +70,198 @@ uv run python tools/check_plugin_parity.py /path/to/solver_fixture_runner
 ```
 
 See [docs/provenance.md](docs/provenance.md) for exact source revisions and [docs/results.md](docs/results.md) for bounded interpretation of the generated results. Code is MIT-licensed; existing Fumiya Ohnishi copyright is preserved. This is research software and makes no closed-loop stability claim.
+
+## Straight-path studies
+
+Run every condition from the single profile, without network access:
+
+```bash
+mkdir -p build/uv-cache build/matplotlib build/tmp
+export UV_CACHE_DIR="$PWD/build/uv-cache" MPLCONFIGDIR="$PWD/build/matplotlib" TMPDIR="$PWD/build/tmp" PYTHONDONTWRITEBYTECODE=1
+uv run --offline --locked --python 3.11.11 dwvp-study all --config configs/access_v2.yaml --output results/access_v2 --seed 0 --workers 4
+uv run --offline --locked --python 3.11.11 pytest -q --basetemp=build/pytest-tmp
+uv run --offline --locked --python 3.11.11 python tools/validate_access_v2.py results/access_v2
+```
+
+`test1` through `test4` run individual studies; `--workers` controls independent
+simulation processes (default 1). `--force` recomputes matching cached trials.
+The old `mechanism`, `obstacles`, `sweeps`, and `legacy-all` commands remain
+available, defaulting to `results/legacy/`. Saved `results/paper/` is preserved.
+
+| Command | Conditions | Output directory |
+|---|---|---|
+| `test1` | 16 conditions: four initial lateral offsets; DWPP, Clipped VP, Scaled VP, DWVP | `test1/` |
+| `test2` | 176 conditions: nine nominal heading ramps, one step, and acceleration sweeps; Clipped VP, Scaled VP, Scaled VP (vel. and acc.), DWVP | `test2/` |
+| `test3` | 6 conditions: obstacle proximity regulation on/off; Clipped VP, Scaled VP, DWVP; goal approach regulation always enabled | `test3/` |
+| `test4` | (a) Each VP baseline matched to DWVP travel time, (b) preview (110), (c) acceleration (100), (d) RPP parameters (36), (e) localization noise (1000) | `test4/` |
+| `preview-noise` | Optional full preview × noise grid, three representative paths | `preview-noise/` |
+| `all` | Four studies, every time-match candidate and all 20 noise seeds; excludes `preview-noise` | `test1/`–`test4/` |
+
+`configs/access_v2.yaml` contains controller settings and the complete study grid.
+The nominal profile uses 0.22 m/s VP demand and adaptive preview time 0.75 s.
+All VP variants and DWVP use the same demand and reachable box; DWVP can select a ray scale
+above one. It always selects the largest alpha at ray/box intersections and
+breaks equal-distance nonintersection ties toward larger alpha. Goal slowdown
+comes from approach regulation and terminal control. Keep `approach_distance > 0`:
+with the nominal straight path, disabling it produces 0.092 m goal overshoot,
+compared with zero at 0.6 m. These are simulation observations.
+DWPP is a forward differential-drive reference with `(v, 0, omega)`,
+ignores supplied path yaw, and uses the final positional tangent for terminal
+rotation. Its transplanted command selector is validated against upstream outputs.
+
+`vp` (Clipped VP) retains component-wise clipping of the original VP demand.
+`vp_scaled` (Scaled VP) first scales that demand by the largest common factor
+in [0, 1] that fits the velocity box after obstacle/goal speed regulation,
+without acceleration limits. It then clips each component to the common dynamic
+window. `vp_scaled_accel` (Scaled VP (vel. and acc.)) additionally scales the
+change from current velocity to that target by one common factor to fit
+the per-axis acceleration limits times the control period, then clips to the
+same window. This resembles the idea of Nav2 velocity smoother's
+`scale_velocities`; it is not the same implementation. Both methods share
+Clipped VP's terminal control. After an abruptly reduced speed cap, all methods
+use the existing reachable braking endpoints when the new cap is unreachable
+in one cycle. Recorded commands, before the plant's physical clip, are checked
+against both physical constraints and the complete regulated dynamic window.
+
+The test2 acceleration part crosses transition lengths 1.0, 0.6, 0.4, 0.3,
+and 0.2 m with simultaneous x/y/yaw acceleration multipliers 0.25, 0.5, 0.75,
+1.0, 1.5, and 2.0. At 0.3 m, a separate sweep changes only yaw acceleration by
+0.25, 0.5, 1.0, and 2.0. Test4 adds Scaled VP wherever Clipped VP is used;
+the auxiliary velocity-and-acceleration variant is limited to test2.
+
+Paths are 4 m long with 0.005 m spacing. Orientation ramps start at x=1 m; a zero
+transition length creates a true step with duplicate position samples. Error
+metrics use x≤3.25 m, before nominal goal regulation starts at 3.4 m. When approach distance is swept
+to 1 m, the error window ends at 2.995 m. Ray/box nonintersection is evaluated
+for all methods independently of whether their solver calls the projection
+branch; terminal cycles are excluded from this count. Travel
+distance is the integrated translation norm, not x progress. The convergence
+metrics include first entry into the 2% band and entry followed by remaining in
+that band to the evaluation boundary. Minimum transition speed includes the
+ramp and its preceding instantaneous preview length. Full duration includes
+terminal settling. Position error is distance to the closest path segment.
+Every condition records maximum, time-mean and time-integrated absolute position
+and heading errors. Integrals use trapezoids between adjacent in-window saved
+samples; means divide by `eval_duration_s`, with no boundary extrapolation and
+no integration across excluded samples. The former arithmetic sample means are
+retained as `eval_sample_mean_position_error_m` and
+`eval_sample_mean_heading_error_deg`. `command_constraint_violation_pct` is the
+percentage of all command cycles violating either the physical velocity or
+acceleration bounds; `travel_time_s` keeps its full-run, success-only definition.
+Physical command excess and regulated-cap excess have
+separate magnitudes and durations; per-axis physical excess uses the respective
+velocity or acceleration units. Regulated-cap excess remains in CSV only; it is
+excluded from reports and figures. Crossing detection uses a 0.000001 m threshold.
+
+Signed heading error is `wrap(robot yaw - projected reference yaw)` in the saved
+`signed_yaw_errors` array (radians). For the positive 90-degree ramps, positive
+error is lead and negative error is lag. CSV columns `eval_max_heading_lead_deg`
+and `eval_max_heading_lag_deg` record their nonnegative maxima over the same
+pre-goal evaluation window. `post_transition_heading_overshoot_deg` records the
+maximum positive excess over final yaw after x exceeds the end of the ramp,
+within that evaluation window; it is missing if the ramp is not passed.
+`transition_heading_lag_deg` restricts lag to the changing-reference interval;
+for a zero-length step it uses the first outgoing sample. The existing
+`eval_max_heading_lag_deg` remains the maximum over the whole evaluation window.
+Test1 and the offset cases in test4 report `crossing_m` as position overshoot;
+test2 and the ramp cases in test4 report heading lag and post-transition overshoot.
+`acceleration_time_vx_s`, `acceleration_time_vy_s`, and `acceleration_time_w_s`
+are the maximum absolute physical axis velocity limits divided by their
+acceleration limits (missing for zero acceleration). `lookahead_time_s` is the
+configured adaptive preview time; `fixed_lookahead_m` identifies conditions
+where fixed distance overrides it.
+
+Time matching separately scales Clipped VP's and Scaled VP's x/y box, demand and nominal speed request by
+the same factor, leaving acceleration and yaw limits fixed. Its sequential search
+retains every candidate, including timeouts, and records achieved timing error
+under `time_matches.vp` and `time_matches.vp_scaled` in the manifest.
+A tolerance of one control period is used. Test2 crosses interval length and
+acceleration; preview × noise is an optional crossed grid. The representative conditions are
+initial offset 0.50 m and orientation intervals 1.0 m and 0.3 m. All approach
+distances in the RPP sweep are positive (0.1, 0.3, 0.6 and 1.0 m). Noise is independent
+Gaussian observation noise each cycle; true pose and measured velocity remain
+exact. Noise seeds 0–19 are paired across methods and conditions. Zero-noise
+seeds repeat the deterministic case and are not independent replications.
+
+Each output directory contains a per-trial `summary.csv` and PDF/PNG figures.
+`test4/noise_summary.csv` and optional `preview-noise/nominal_selection.csv` contain means, sample
+standard deviations, metric-wise finite counts, successes, failures, timeouts and
+evaluation completion counts. Statistics include observed failed/timeout runs;
+undefined metrics remain missing. The optional report covers all 55 preview/noise
+combinations and all three representative paths. Run it with `uv run --offline --locked
+--python 3.11.11 dwvp-study preview-noise --config configs/access_v2.yaml
+--output results/preview-noise --seed 0 --workers 4`.
+
+`manifest.json` records all planned conditions, full configurations, seeds, source
+and dependency hashes, outcomes and elapsed time. Partial runs use
+`manifest_testN.json` or `manifest_preview-noise.json`. The manifest is checkpointed while running; individual
+trials save immediately under ignored `trials/<hash>/`. Cache identity includes
+initial pose, path, evaluation rules, environment and numerical source hash;
+changes only to plotting/reporting can reuse numerical trajectories. The final
+manifest also records the full source hash. Exceptions become explicit `error`
+rows with tracebacks in trial metadata. `issues.csv` lists failed or physically
+violating conditions.
+`REPORT.md` is a generated factual handoff of at most 240 lines, with common
+metric columns across tests. Test4's compact table averages per-condition
+metrics; individual conditions and noise standard deviations remain in CSV.
+Settling metrics remain in CSV only. An optional
+`--baseline /path/to/previous/manifest.json` matches trajectory specifications
+across test renumbering and writes `method_changes.csv` and a manifest audit.
+If old `trials/` are present, it also compares mean position error
+and goal overshoot reconstructed from those histories. Other unchanged numeric
+metrics use an absolute comparison tolerance of 1e-10. The comparison also
+counts preserved original condition IDs and lists any missing original conditions.
+The snapshot taken before adding the scaled baselines is retained locally at
+`build/scaled-vp-task/prechange/manifest.json`; pass that path to `--baseline`
+to reproduce the before/after comparison in the saved report.
+
+To refresh metrics from the existing trajectories, without rerunning simulations:
+
+```bash
+# Use the repository-local cache variables shown above.
+uv run --offline --locked --python 3.11.11 python tools/recompute_access_metrics.py results/access_v2 --baseline build/metrics_alignment/manifest.before.json
+```
+
+The immutable baseline is created if absent. `metrics_alignment_changes.csv`
+records every changed pre-existing value; only the two means may change.
+`metrics_alignment.json` records every trajectory's unchanged SHA-256. Trial
+IDs and specs retain their original simulation source identity; manifest
+`simulation_source_sha256` and `simulation_numerical_source_sha256` preserve
+generation provenance, while the current source hashes identify the refreshed
+metrics, report and figures. Trial metadata records `metrics_source_sha256`.
+
+`test2/overshoot_prediction.csv` covers all simultaneous and angular-only
+acceleration sweep conditions for VP, scaled VP and DWVP. It records omega
+immediately before the first braking command whose preview target has final yaw,
+that cycle's `T=max(0.20, k*lookahead/desired_translation_speed)`, and the frozen
+prediction `max(0, omega**2/(2*aw)-omega*T)` beside measured post-ramp overshoot.
+The final-yaw crossing occurs later, after braking, and is not the sampling event.
+The prediction assumes constant T and maximum angular deceleration; the report
+shows mismatches as well as matches. It is not a DWVP guarantee.
+
+At alignment start, the purported all-zero overshoot column was already nonzero
+in 535 conditions and matched direct trajectory calculations. The old report
+omitted this column. The current files cannot establish the cause in an earlier
+all-zero version; regression tests cover the supplied 0.3 m reference values.
+
+Validate a completed run with `uv run --offline --locked --python 3.11.11 python tools/validate_access_v2.py results/access_v2`;
+use `--study preview-noise` for the optional grid. Use the existing locked environment.
+The saved results of this configuration are in `results/access_v2/`.
+
+Figures require installed Times New Roman, use STIX math and PDF font type 42,
+7–8 pt text, English axes, one panel per file and separate horizontal legends.
+No title is drawn inside panels. Fixed-preview test1 runs can overlay the ideal
+omni orbit and linear PP curve when the initial error is smaller than preview;
+the nominal adaptive-preview figures do not overlay fixed-distance theory.
+
+The test2 sweep figures show maximum heading error versus transition length and
+versus required yaw rate divided by its limit. Their reference line is
+`vp_translation_speed * (pi/2) / w_max = 0.575959 m` (ratio 1); the separate step
+condition is omitted from these finite-rate axes. The 0.3 m time series keeps the
+horizontal prediction `w_max * 0.3 / (pi/2)`, with a separate legend file.
+The acceleration sweep adds separate maximum heading/position error panels for
+each interval and a separate yaw-only sweep. At 0.3 m, nominal and half-acceleration
+time series show translation speed, yaw rate, and signed heading error for
+Clipped VP, Scaled VP, and DWVP, with a separate three-method legend. The signed
+error panels end at the pre-goal evaluation boundary; velocity panels show the
+whole run. The report compares every sweep cell without assuming DWVP is best.

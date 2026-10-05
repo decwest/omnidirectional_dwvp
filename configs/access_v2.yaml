@@ -1,0 +1,60 @@
+# Straight-path study profile; all sweeps are declared below.
+frequency: 30.0
+timeout: 120.0
+vx_min: -0.22
+vx_max: 0.22
+vy_min: -0.22
+vy_max: 0.22
+w_min: -0.6
+w_max: 0.6
+ax: 0.22
+ay: 0.22
+aw: 0.6
+desired_linear_vel: 0.32
+vp_translation_speed: 0.22
+lookahead_min: 0.11
+lookahead_max: 0.33
+lookahead_time: 0.75
+fixed_lookahead: null
+orientation_time_weight: 1.0
+min_orientation_time: 0.2
+goal_xy: 0.02
+goal_yaw: 0.017453292519943295
+use_cost_regulation: false
+cost_scaling_dist: 0.6
+cost_scaling_gain: 1.0
+regulated_min_speed: 0.05
+approach_distance: 0.6
+min_approach_speed: 0.05
+robot_radius: 0.22
+inflation_radius: 0.7
+inflation_factor: 3.0
+noise_xy: 0.0
+noise_yaw: 0.0
+
+study:
+  path_length: 4.0
+  path_spacing: 0.005
+  ramp_start: 1.0
+  evaluation_end: 3.25
+  offsets: [0.10, 0.25, 0.50, 1.00]
+  transition_lengths: [1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2]
+  include_step: true
+  representative_offset: 0.50
+  representative_gradual: 1.0
+  representative_rapid: 0.3
+  fixed_lookaheads: [0.055, 0.08, 0.11, 0.165, 0.22, 0.33, 0.44]
+  lookahead_times: [0.5, 0.75, 1.0, 1.5]
+  acceleration_transition_lengths: [1.0, 0.6, 0.4, 0.3, 0.2]
+  acceleration_time_series_scales: [1.0, 0.5]
+  acceleration_scales: [0.25, 0.5, 0.75, 1.0, 1.5, 2.0]
+  angular_acceleration_scales: [0.25, 0.5, 1.0, 2.0]
+  cost_distances: [0.2, 0.4, 0.6, 0.8]
+  cost_gains: [0.25, 0.5, 0.75, 1.0]
+  approach_distances: [0.1, 0.3, 0.6, 1.0]
+  noise_levels: [[0.0, 0.0], [0.002, 0.1], [0.005, 0.2], [0.01, 0.5], [0.02, 1.0]]
+  noise_seeds: 20
+  match_min_scale: 0.1
+  match_iterations: 20
+  match_tolerance_s: 0.03333333333333333
+  obstacles: [[1.6, -0.45, 0.10], [2.4, 0.55, 0.10]]

@@ -18,6 +18,7 @@ class Config:
     ay: float = 0.22
     aw: float = 0.60
     desired_linear_vel: float = 0.32
+    vp_translation_speed: float | None = None
     lookahead_min: float = 0.11
     lookahead_max: float = 0.33
     lookahead_time: float = 1.5
@@ -51,6 +52,8 @@ class Config:
             raise ValueError("lookahead bounds must be ordered and positive")
         if self.fixed_lookahead is not None and self.fixed_lookahead <= 0:
             raise ValueError("fixed lookahead must be positive")
+        if self.vp_translation_speed is not None and self.vp_translation_speed < 0:
+            raise ValueError("VP translation speed must be nonnegative")
         if self.cost_scaling_dist <= 0 or self.inflation_factor <= 0:
             raise ValueError("cost distance and inflation factor must be positive")
         if np.any(self.lower > 0) or np.any(self.upper < 0):
@@ -70,3 +73,10 @@ class Config:
     def box_speed(self): return float(np.hypot(max(abs(self.vx_min), abs(self.vx_max)), max(abs(self.vy_min), abs(self.vy_max))))
     @property
     def nominal_speed(self): return min(self.box_speed, self.desired_linear_vel)
+
+    @property
+    def translation_speed(self):
+        """Demand magnitude; default is feasible in every planar direction."""
+        if self.vp_translation_speed is not None:
+            return self.vp_translation_speed
+        return min(-self.vx_min, self.vx_max, -self.vy_min, self.vy_max)

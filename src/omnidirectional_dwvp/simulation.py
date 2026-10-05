@@ -5,7 +5,7 @@ import math
 import numpy as np
 from .config import Config
 from .metrics import project_reference
-from .controller import compute_command, dynamic_box
+from .controller import compute_command, dynamic_box, terminal_heading
 from .geometry import integrate, wrap, surface_distance, swept_clearance
 
 
@@ -25,22 +25,26 @@ def _direction_angles(desired, commands, scale):
     return angles
 
 
-def simulate(path, method="dwvp", config=Config(), obstacles=(), seed=0):
+def simulate(path, method="dwvp", config=Config(), obstacles=(), seed=0, initial_pose=None):
     path = np.asarray(path, dtype=float)
     if path.ndim != 2 or path.shape[1] != 3 or len(path) < 2 or not np.all(np.isfinite(path)):
         raise ValueError("path must contain at least two finite [x,y,yaw] poses")
     arc = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(path[:, :2], axis=0), axis=1))]
-    pose = np.array([0.0, 0.0, 0.0])
+    pose = np.zeros(3) if initial_pose is None else np.array(initial_pose, dtype=float, copy=True)
+    if pose.shape != (3,) or not np.all(np.isfinite(pose)):
+        raise ValueError("initial_pose must be a finite [x,y,yaw] pose")
+    goal_yaw = terminal_heading(path) if method == "dwpp" else path[-1, 2]
     current = np.zeros(3)
     rng = np.random.default_rng(seed)
     poses, applied, demands, commands, boxes, caps, looks, durations, modes, clearances = [pose.copy()], [], [], [], [], [], [], [], [], []
     reached = False
     first_reach = None
     physical_violation, acceleration_violation, demand_violation = [], [], []
-    mode_code = {"clipping": 0, "intersection": 1, "projection": 2, "terminal": 3, "zero": 4}
+    mode_code = {"clipping": 0, "intersection": 1, "projection": 2, "terminal": 3, "zero": 4,
+                 "scaled_velocity": 5, "scaled_acceleration": 6}
     for step in range(math.ceil(config.timeout / config.dt)):
         within_goal = (np.linalg.norm(pose[:2] - path[-1, :2]) <= config.goal_xy and
-                       abs(wrap(pose[2] - path[-1, 2])) <= config.goal_yaw)
+                       abs(wrap(pose[2] - goal_yaw)) <= config.goal_yaw)
         if within_goal and first_reach is None:
             first_reach = step * config.dt
         if within_goal and np.max(np.abs(current)) <= 1e-3:
@@ -90,7 +94,7 @@ def simulate(path, method="dwvp", config=Config(), obstacles=(), seed=0):
                    mean_heading_error_deg=float(np.rad2deg(np.mean(yaw_errors))),
                    max_heading_error_deg=float(np.rad2deg(np.max(yaw_errors))),
                    final_position_error_m=float(np.linalg.norm(positions[-1, :2]-path[-1, :2])),
-                   final_heading_error_deg=float(abs(np.rad2deg(wrap(positions[-1, 2]-path[-1, 2])))),
+                   final_heading_error_deg=float(abs(np.rad2deg(wrap(positions[-1, 2]-goal_yaw)))),
                    velocity_violation_pct=100*float(np.mean(physical_violation)) if applied.size else 0.,
                    acceleration_violation_pct=100*float(np.mean(acceleration_violation)) if applied.size else 0.,
                    unconstrained_demand_violation_pct=100*float(np.mean(demand_violation)) if applied.size else 0.,

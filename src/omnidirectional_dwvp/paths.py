@@ -139,3 +139,32 @@ def make_paths():
     independent[:, 2] = (3*s*s - 2*s*s*s) * (np.pi / 2)
     return {"iros_docking": corner, "iros_curve": curve,
             "constant_heading_corner": constant, "independent_heading_curve": independent}
+
+
+def straight_path(length=4.0, spacing=0.005, heading=0.0):
+    """Straight path from the origin with tangent heading, including its endpoint."""
+    if not all(math.isfinite(v) for v in (length, spacing, heading)) or min(length, spacing) <= 0:
+        raise ValueError("length and spacing must be finite and positive")
+    s = np.r_[np.arange(0.0, length, spacing), length]
+    return np.c_[s * math.cos(heading), s * math.sin(heading), np.full_like(s, heading)]
+
+
+def orientation_ramp_path(transition_length, length=4.0, spacing=0.005, start=1.0):
+    """Straight x-axis path with independent yaw 0 to pi/2; zero length is a step.
+
+    The step uses duplicate XY poses at start so projected reference yaw has a
+    discontinuity instead of a one-sample artificial ramp. At exactly start,
+    segment projection chooses the incoming (zero-yaw) segment.
+    """
+    if not all(math.isfinite(v) for v in (transition_length, start)) or transition_length < 0:
+        raise ValueError("transition length must be finite and nonnegative")
+    if start <= 0 or start + transition_length >= length:
+        raise ValueError("transition must lie inside the path")
+    path = straight_path(length, spacing)
+    if transition_length == 0:
+        x = np.r_[path[path[:, 0] < start, 0], start, start, path[path[:, 0] > start, 0]]
+        yaw = np.where(x >= start, math.pi / 2, 0.0)
+        yaw[np.flatnonzero(x == start)[0]] = 0.0
+        return np.c_[x, np.zeros_like(x), yaw]
+    path[:, 2] = np.clip((path[:, 0] - start) / transition_length, 0.0, 1.0) * math.pi / 2
+    return path
