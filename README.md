@@ -161,6 +161,19 @@ with `acceleration_time_series_legend.{pdf,png}`. They extend beyond the ramp
 to x=3.25 m. Superseded acceleration figures are retained in each test's
 `previous_acceleration_figures/` directory.
 
+All Test 2 publication figures use the same three methods; `vp_scaled_accel`
+remains in the saved data and validation. To refresh the default-setting figures
+and archived multiplier panels from existing CSV/NPZ files only, use the
+repository-local cache variables above and run:
+
+```bash
+uv run --offline --locked --python 3.11.11 python tools/refresh_test2_figures.py results/access_v2
+uv run --offline --locked --python 3.11.11 python tools/validate_access_v2.py results/access_v2
+```
+
+This command preserves CSVs, trajectories, `REPORT.md`, and unaffected figures.
+The manifest retains the simulation source hash and records the figure refresh.
+
 Paths are 4 m long with 0.005 m spacing. Orientation ramps start at x=1 m; a zero
 transition length creates a true step with duplicate position samples. Error
 metrics use x≤3.25 m, before nominal goal regulation starts at 3.4 m. When approach distance is swept

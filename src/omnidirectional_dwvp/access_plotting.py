@@ -14,7 +14,8 @@ COLORS = {'vp': '#2568a0', 'vp_scaled': '#b87510', 'vp_scaled_accel': '#7b52a1',
 LABELS = {'vp': 'Clipped VP', 'vp_scaled': 'Scaled VP', 'vp_scaled_accel': 'Scaled VP (vel. and acc.)',
           'dwvp': 'DWVP', 'dwpp': 'DWPP', 'rpp': 'RPP'}
 STYLES = {'vp': '--', 'vp_scaled': '-.', 'vp_scaled_accel': ':', 'dwvp': '-', 'dwpp': (0, (5, 1, 1, 1)), 'rpp': '--'}
-HEADING_METHODS = ('vp', 'vp_scaled', 'vp_scaled_accel', 'dwvp')
+# Publication figures omit the auxiliary method; saved data and validation retain it.
+HEADING_METHODS = ('vp', 'vp_scaled', 'dwvp')
 
 
 def style():
@@ -73,6 +74,7 @@ def theory_curves(e0, lookahead, distance):
 
 
 def figures(output, rows, settings, config):
+    rows = [r for r in rows if r['test']!='test2' or r['method'] in HEADING_METHODS]
     style()
     preview_noise_figures(output, rows, config)
     for test in ('test1', 'test2', 'test3'):
@@ -155,7 +157,7 @@ def figures(output, rows, settings, config):
     acceleration = [r for r in rows if r['test']=='test2' and r['part']=='acceleration' and r['status']!='error']
     if acceleration:
         out = output/'test2'
-        methods = ('vp', 'vp_scaled', 'dwvp')
+        methods = HEADING_METHODS
         legend(out/'acceleration_ratio_legend', methods, ratio_boundary=True)
         for ell in settings['acceleration_transition_lengths']:
             group = [r for r in acceleration if r['parameter']=='acceleration_scale'
