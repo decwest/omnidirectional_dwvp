@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from matplotlib import font_manager
 from .access_metrics import aggregate
+from .access_noise import noise_lookahead_estimate, preview_noise_summary
 
 COLORS = {'vp': '#2568a0', 'vp_scaled': '#b87510', 'vp_scaled_accel': '#7b52a1',
           'dwvp': '#bf4145', 'dwpp': '#23845d', 'rpp': '#2568a0'}
@@ -73,6 +74,7 @@ def theory_curves(e0, lookahead, distance):
 
 def figures(output, rows, settings, config):
     style()
+    preview_noise_figures(output, rows, config)
     for test in ('test1', 'test2', 'test3'):
         chosen = [r for r in rows if r['test']==test and r['status']!='error' and r['part']!='acceleration']
         if not chosen:
@@ -233,3 +235,35 @@ def figures(output, rows, settings, config):
         ax.set(xlabel='Position noise standard deviation [m]', ylabel=label)
         ax.grid(alpha=.2, lw=.4)
         save(fig, out/(scene+'_noise'))
+
+
+def preview_noise_figures(output, rows, config):
+    grouped = [r for r in preview_noise_summary(rows) if r['parameter'] == 'fixed_lookahead']
+    if not grouped:
+        return
+    out = output/'preview-noise'
+    levels = sorted({(r['noise_xy_m'], r['noise_yaw_deg']) for r in grouped})
+    colors = ('#333333', '#2568a0', '#23845d', '#b87510', '#bf4145')
+    markers = ('o', 's', '^', 'D', 'v')
+    handles = []
+    for i, (xy, yaw) in enumerate(levels):
+        handles.append(Line2D([], [], color=colors[i % len(colors)], marker=markers[i % len(markers)],
+                              ms=3, lw=1., label=rf'$\sigma_{{xy}}={xy:g}$ m, $\sigma_\psi={yaw:g}^\circ$'))
+    handles.append(Line2D([], [], color='0.35', ls=':', lw=.8,
+                          label=rf'$L={noise_lookahead_estimate(config, 1.):g}\sigma_{{xy}}$ (same color)'))
+    for scene in dict.fromkeys(r['scenario'] for r in grouped):
+        fig, ax = plt.subplots(figsize=(3.35, 2.15))
+        for i, (xy, yaw) in enumerate(levels):
+            series = sorted((r for r in grouped if (r['scenario'], r['noise_xy_m'], r['noise_yaw_deg']) == (scene, xy, yaw)),
+                            key=lambda r: r['value'])
+            color = colors[i % len(colors)]
+            ax.plot([r['value'] for r in series],
+                    [r['travel_time_s_mean'] if r['travel_time_s_mean'] is not None else np.nan for r in series],
+                    color=color, marker=markers[i % len(markers)], ms=3, lw=1.)
+            ax.axvline(noise_lookahead_estimate(config, xy), color=color, ls=':', lw=.8)
+        ax.set(xlabel='Fixed lookahead distance [m]', ylabel='Mean travel time [s]')
+        ax.grid(alpha=.2, lw=.4)
+        save(fig, out/(scene+'_travel_time_vs_fixed_lookahead'))
+    fig = plt.figure(figsize=(11.5, .3))
+    fig.legend(handles=handles, loc='center', ncol=len(handles), frameon=False, borderaxespad=0)
+    save(fig, out/'noise_lookahead_legend')

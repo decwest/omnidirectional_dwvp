@@ -4,6 +4,7 @@ import json
 import math
 import numpy as np
 from .access_metrics import COMMON_METRICS, aggregate, heading_braking_prediction
+from .access_noise import noise_lookahead_estimate, preview_noise_summary, travel_time_recovery
 from .config import Config
 from .studies import sha, write_csv
 
@@ -63,7 +64,7 @@ def report(output, rows, manifest):
              '位置の行き過ぎは初期横偏差と反対側への最大偏差。姿勢の遅れは姿勢変化区間内の参照−ロボットの最大値、行き過ぎは区間通過後のロボット−最終参照の最大値（いずれも非負）。'
              '整定時間は横方向誤差が初期偏差の2%以内に入り、評価区間の終わりまで留まる時刻。評価区間未完走・未整定は空欄。段差（ℓ=0）の遅れは変化直後の最初の試料。',
              'vp=成分別クリップ、vp_scaled=速度箱への一様縮小後にクリップ、vp_scaled_accel=速度差も一様縮小する補助比較、dwvp=DWVP、dwpp=差動二輪DWPP、rpp=差動二輪RPP。', '']
-    preview = lookahead_ranges(rows)
+    preview = lookahead_ranges([{**r, 'test': 'test4'} if r['test']=='preview-noise' else r for r in rows])
     write_csv(output/'lookahead_ranges.csv', preview)
     for item in preview:
         fixed = (f"、適応 {f(item['adaptive_minimum_m'], 6)}–{f(item['adaptive_maximum_m'], 6)} m、固定 {f(item['fixed_minimum_m'], 6)}–{f(item['fixed_maximum_m'], 6)} m"
@@ -93,8 +94,6 @@ def report(output, rows, manifest):
                          *([f(constraint(r))] if violation else [])])
         table([*[label for _, label in prefix], *headers, *extra_headers,
                *(['指令制約違反 [%]'] if violation else [])], data)
-        if not violation:
-            lines.append('この表の全手法・全条件で、指令が制約を超えた周期の割合は0%。')
     lateral = (('crossing_m', '位置行き過ぎ [m]', 5),
                ('settling_2pct_time_s', '整定時間 [s]', 2))
     heading = (('transition_heading_lag_deg', '姿勢遅れ [°]', 2),
@@ -124,9 +123,7 @@ def report(output, rows, manifest):
                 data.append([f(ell, 1), f(row['acceleration_time_w_s']/row['lookahead_time_s'], 2), *values])
             table(['ℓ [m]', 'ω_max/(a_ω T)', '最大姿勢誤差 [°]', '姿勢誤差積分 [°·s]',
                    *[label for _, label, _ in heading]], data)
-            if all(r['command_constraint_violation_pct'] == 0 for r in sweep):
-                lines.append('この表の全手法・全条件で、指令が制約を超えた周期の割合は0%。')
-            else:
+            if any(r['command_constraint_violation_pct'] != 0 for r in sweep):
                 table(['ℓ [m]', '倍率', '手法', '指令制約違反 [%]'],
                       [[r['transition_length_m'], r['value'], r['method'], f(r['command_constraint_violation_pct'])] for r in sweep])
             lines.append('格子図は `test2/acceleration_ratio_ramp_{1,0p6,0p4,0p3,0p2}_{overshoot,heading_integral,heading}`、凡例は `acceleration_ratio_legend`。時系列は `ramp_0p3_acceleration_{0p25,1}_{speed,yaw,signed_heading}`、凡例は `acceleration_time_series_legend`（各PDF/PNG）。時系列は変化区間の終端x=1.3 mを過ぎ、評価上端x=3.25 mまで表示する。')
@@ -185,11 +182,34 @@ def report(output, rows, manifest):
                 for method, match in manifest.get('time_matches', {}).items():
                     lines.append(f"{method}: 採用速度倍率 {f(match['best_scale'], 6)}、DWVPとの時間差 {f(match['difference_s'])} s、許容差内={match['matched']}。")
     if chosen('preview-noise'):
-        lines.extend(['', '## 任意試験：前方注視×ノイズ', '',
-                      '全条件の共通指標はsummary.csv、水準ごとの平均・標本SD・有効数はnominal_selection.csv。'])
-        grouped = aggregate(chosen('preview-noise'), ('scenario', 'method'))
-        group_rows = [{**g, **{k: g[k+'_mean'] for k in (*COMMON_METRICS, 'crossing_m', 'settling_2pct_time_s', 'transition_heading_lag_deg', 'post_transition_heading_overshoot_deg')}} for g in grouped]
-        common_table((('scenario', '経路'), ('method', '手法')), group_rows, lateral+heading)
+        if not chosen('test4'):
+            lines.extend(['', '## 試験4：結果の頑健性', '', '### (c) 自己位置推定のノイズ', ''])
+            means = aggregate(chosen('preview-noise'), ('scenario', 'method'))
+            common_table((('scenario', '経路'), ('method', '手法')),
+                         [{**g, **{k: g[k+'_mean'] for k in COMMON_METRICS}} for g in means])
+        grouped = preview_noise_summary(rows)
+        config = Config(**manifest['config'])
+        recovery = travel_time_recovery(grouped, config)
+        write_csv(output/'preview-noise'/'travel_time_recovery.csv', recovery)
+        lines.extend(['', 'DWVPの前方注視×ノイズも(c)に含む。各水準20 seed。共通指標の全試行は `preview-noise/summary.csv`、平均・標本SD・有効数・成功数は `nominal_selection.csv`。',
+                      '下表は平均走行時間 [s]（成功数/20）。固定L [m]と適応T [s]を列に示す。未成功の時間は平均に含めず、全条件の成否を残す。',
+                      f'方向の揺れをσ_xy/L、横方向の速度変化をVσ_xy/Lと近似し、1周期の加速度の幅aΔtとの比較から L≥Vσ_xy/(aΔt)={noise_lookahead_estimate(config, 1.):g}σ_xy と見積もる（V={config.translation_speed:g} m/s、a={config.ay:g} m/s²、Δt=1/{config.frequency:g} s）。周期間の独立ノイズの差分、姿勢ノイズ、終端処理はこの近似に含まない。',
+                      '回復は同じ場面のノイズなし平均の1.1倍以内、かつ両条件20/20成功と定義する。基準は既定の適応注視と同じ固定Lの2通りを併記する。最小Lは掃引した水準内の値であり、連続的な境界や保証ではない。'])
+        levels = sorted({(r['noise_xy_m'], r['noise_yaw_deg']) for r in grouped})
+        previews = list(dict.fromkeys((r['parameter'], r['value']) for r in grouped))
+        for scene in dict.fromkeys(r['scenario'] for r in grouped):
+            by_key = {(r['noise_xy_m'], r['noise_yaw_deg'], r['parameter'], r['value']): r
+                      for r in grouped if r['scenario']==scene}
+            table([f'{scene}: σ_xy [m] / σ_yaw [°]',
+                   *[f"{'L' if p=='fixed_lookahead' else 'T'}={v:g}" for p, v in previews]],
+                  [[f'{xy:g} / {yaw:g}', *[f"{f(by_key[xy,yaw,p,v]['travel_time_s_mean'], 2)} ({by_key[xy,yaw,p,v]['success_count']}/{by_key[xy,yaw,p,v]['n']})"
+                    for p, v in previews]] for xy, yaw in levels])
+            paired = {(r['noise_xy_m'], r['noise_yaw_deg']): r for r in recovery
+                      if r['scenario']==scene and r['reference']=='same_fixed_lookahead'}
+            values = [f"σ={r['noise_xy_m']:g}: {f(r['minimum_fixed_lookahead_m'])} / {f(paired[r['noise_xy_m'],r['noise_yaw_deg']]['minimum_fixed_lookahead_m'])} / {f(r['estimate_lookahead_m'])}"
+                      for r in recovery if r['scenario']==scene and r['reference']=='nominal_preview']
+            lines.append(f"{scene}の最小回復L（既定基準 / 同じL基準） / 見積もりL [m]："+'、'.join(values)+'。')
+        lines.append('図は `preview-noise/{offset,gradual,rapid}_travel_time_vs_fixed_lookahead`、横一列の別凡例は `noise_lookahead_legend`（PDF/PNG）。ノイズ水準ごとの縦点線はL=30σ_xy。回復判定の平均時間と基準値は `travel_time_recovery.csv`。')
     if chosen('regulation-sweep'):
         lines.extend(['', '## 任意試験：速度調整パラメータ', ''])
         common_table((('parameter', 'パラメータ'), ('value', '値'), ('method', '手法')), chosen('regulation-sweep'),
@@ -229,7 +249,7 @@ def report(output, rows, manifest):
         lines.append('終了未成功: '+'、'.join(issue_counts)+'。条件・seed・終了状態は `issues.csv`。')
     if manifest.get('method_comparison'):
         lines.append('比較手法追加時の過去の照合記録はmanifest.jsonのmethod_comparisonとmethod_changes.csvに保持。今回の再集計とは別の履歴である。')
-    lines.append('図は従来の書体・寸法を維持。実機試行は0件。')
+    lines.append('共通指標表で指令制約違反の列を省略した表は、全手法・全条件で違反率0%。図は従来の書体・寸法を維持。実機試行は0件。')
     lines = [line for i, line in enumerate(lines) if line or i == 0 or lines[i-1]]
     if len(lines) > 240:
         raise RuntimeError(f'REPORT.md would exceed 240 lines: {len(lines)}')

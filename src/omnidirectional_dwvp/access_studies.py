@@ -1,4 +1,4 @@
-"""Four reproducible straight-path studies and an optional preview/noise grid, with explicit outcomes for every condition."""
+"""Four reproducible straight-path studies, including the preview/noise grid."""
 from dataclasses import asdict, replace
 from time import perf_counter
 import hashlib
@@ -35,6 +35,10 @@ def make_condition(test, part, scenario, method, config, seed, settings, paramet
                 evaluation_end=min(settings['evaluation_end'], settings['path_length'] - config.approach_distance - settings['path_spacing']) if config.approach_distance > 0 else settings['evaluation_end'],
                 path_length=settings['path_length'], path_spacing=settings['path_spacing'],
                 ramp_start=settings['ramp_start'], obstacles=settings['obstacles'] if scenario['kind']=='obstacles' else [])
+
+
+def selected_studies(study):
+    return ('test1', 'test2', 'test3', 'test4', 'preview-noise') if study == 'all' else (study,)
 
 
 def plan_conditions(config, settings, seed, selected):
@@ -96,7 +100,7 @@ def plan_conditions(config, settings, seed, selected):
             add('test4', 'c', scene, ('dwpp', *both) if scene['kind']=='offset' else both, cfg, 'noise', xy, seeds)
         for parameter, value in lookaheads:
             for scene in representatives:
-                add('preview-noise', 'g', scene, ('dwvp',), replace(cfg, **{parameter: value}), parameter, value, seeds)
+                add('preview-noise', 'c', scene, ('dwvp',), replace(cfg, **{parameter: value}), parameter, value, seeds)
     return conditions, representatives
 
 
@@ -188,7 +192,7 @@ def run(study, output, config, settings, seed=0, force=False, config_path=None, 
     from .access_plotting import figures
     from .access_report import report
     start = perf_counter()
-    selected = tuple(f'test{i}' for i in range(1, 5)) if study=='all' else (study,)
+    selected = selected_studies(study)
     output.mkdir(parents=True, exist_ok=True)
     conditions, representatives = plan_conditions(config, settings, seed, selected)
     source = code_hash()
@@ -282,7 +286,7 @@ def run(study, output, config, settings, seed=0, force=False, config_path=None, 
         chosen = [r for r in rows if r['test']==test]
         write_csv(directory/'summary.csv', chosen)
         if test in ('test4', 'preview-noise'):
-            for part, filename in ((('c', 'noise_summary.csv'),) if test=='test4' else (('g', 'nominal_selection.csv'),)):
+            for part, filename in ((('c', 'noise_summary.csv'),) if test=='test4' else (('c', 'nominal_selection.csv'),)):
                 grouped = aggregate([r for r in chosen if r['part']==part],
                                     ('part', 'scenario', 'method', 'parameter', 'value', 'noise_xy_m', 'noise_yaw_deg'))
                 write_csv(directory/filename, grouped)

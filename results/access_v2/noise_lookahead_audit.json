@@ -1,0 +1,14 @@
+{
+  "baseline_manifest": "results/access_v2/trials/noise_lookahead_baseline/manifest.json",
+  "baseline_manifest_sha256": "448e96adb33f5fc62fa479a357db0c75be74e81a4951b97f87e0bd8ae19c23b3",
+  "preserved_sha256_file": "results/access_v2/trials/noise_lookahead_baseline/preserved_sha256.json",
+  "preserved_sha256_file_sha256": "154057997b4601d132c94d0770eeb3bc0c0d0daabc1c88083692d042e1e183af",
+  "source_sha256": "8affa9084aa699358f896ee31ef16759987bb89fbbfcbac0b004da8e1416609c",
+  "numerical_source_sha256": "dcacc8b0328d9f5b909e957f78894d4d6d0663a91cb60a5aef4b4c11a9588fe8",
+  "existing_conditions_unchanged": 1327,
+  "additional_conditions": 3610,
+  "preserved_files_unchanged": 12122,
+  "pdf_timestamp_only_changes_discarded": 78,
+  "branch": "feature/dwvp_access",
+  "head": "76faf3b537368c106a160656eb9bc0ffdfe45b8f"
+}

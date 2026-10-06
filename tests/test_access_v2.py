@@ -12,7 +12,8 @@ from omnidirectional_dwvp.paths import straight_path, orientation_ramp_path
 from omnidirectional_dwvp.simulation import simulate
 from omnidirectional_dwvp.metrics import project_reference
 from omnidirectional_dwvp.access_metrics import aggregate, evaluate, time_error_metrics, heading_braking_prediction
-from omnidirectional_dwvp.access_studies import plan_conditions, execute_trial, numerical_hash
+from omnidirectional_dwvp.access_studies import plan_conditions, execute_trial, numerical_hash, selected_studies
+from omnidirectional_dwvp.access_noise import noise_lookahead_estimate, travel_time_recovery
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -113,13 +114,20 @@ def test_ray_selection_can_exceed_unit_scale():
 def test_noise_and_selection_grid_keep_all_twenty_seeds():
     profile=yaml.safe_load((ROOT/'configs/access_v2.yaml').read_text())
     settings=profile.pop('study')
-    conditions,_=plan_conditions(Config(**profile),settings,0,tuple(f'test{i}' for i in range(1,5)))
+    conditions,_=plan_conditions(Config(**profile),settings,0,selected_studies('all'))
     assert not any(c['part'] in ('d','f','g') for c in conditions)
     optional,_=plan_conditions(Config(**profile),settings,0,('preview-noise',))
-    g=[c for c in optional if c['part']=='g']
+    g=[c for c in conditions if c['test']=='preview-noise']
+    assert g==optional and {c['part'] for c in g}=={'c'}
+    assert {c['config']['fixed_lookahead'] for c in g if c['parameter']=='fixed_lookahead'}=={.055,.08,.11,.165,.22,.33,.44,.6}
     e=[c for c in conditions if c['test']=='test4' and c['part']=='c']
-    assert len(g)==11*5*3*20 and len(e)==10*5*20
+    assert len(g)==12*5*3*20 and len(e)==10*5*20
     assert set(c['seed'] for c in g)==set(range(20))
+    from collections import defaultdict
+    seeds=defaultdict(list)
+    for c in g:
+        seeds[c['scenario']['name'],c['parameter'],c['value'],c['config']['noise_xy']].append(c['seed'])
+    assert len(seeds)==180 and all(sorted(v)==list(range(20)) for v in seeds.values())
     assert len([c for c in conditions if c['test']=='test1'])==16
     assert len([c for c in conditions if c['test']=='test2'])==176
     assert len([c for c in conditions if c['test']=='test3'])==4
@@ -128,7 +136,7 @@ def test_noise_and_selection_grid_keep_all_twenty_seeds():
     assert len([c for c in conditions if c['test']=='test2' and c['part']=='step'])==4
     assert set(c['part'] for c in conditions if c['test']=='test4')==set('bc')
     assert not any(c['test']=='test4' and 'acceleration' in c['parameter'] for c in conditions)
-    assert len(conditions)==1306
+    assert len(conditions)==4916
     optional,_=plan_conditions(Config(**profile),settings,0,('regulation-sweep',))
     assert len(optional)==36 and {c['part'] for c in optional}=={'d'}
     optional,_=plan_conditions(Config(**profile),settings,0,('acceleration-sweep',))
@@ -145,6 +153,57 @@ def test_noise_and_selection_grid_keep_all_twenty_seeds():
         assert c['config']['ay']==pytest.approx(profile['ay']*scale)
         if c['parameter']=='angular_acceleration_scale':
             assert c['scenario']['transition_length']==.3
+
+
+def test_noise_recovery_uses_paired_zero_noise_baseline_and_all_successes():
+    config=Config()
+    assert noise_lookahead_estimate(config,.02)==pytest.approx(.6)
+    summary=[]
+    for xy in (0.,.02):
+        for value, time, successes in ((.11,10. if xy==0 else 10.5,20 if xy==0 else 19),
+                                       (.33,20. if xy==0 else 22.,20)):
+            summary.append(dict(scenario='offset',parameter='fixed_lookahead',value=value,
+                                noise_xy_m=xy,noise_yaw_deg=0. if xy==0 else 1.,n=20,
+                                success_count=successes,travel_time_s_n=successes,travel_time_s_mean=time))
+    summary.append(dict(scenario='offset',parameter='lookahead_time',value=config.lookahead_time,
+                        noise_xy_m=0.,noise_yaw_deg=0.,n=20,success_count=20,
+                        travel_time_s_n=20,travel_time_s_mean=19.))
+    all_recovery=travel_time_recovery(summary,config)
+    assert all_recovery[1]['reference']=='nominal_preview'
+    assert all_recovery[1]['minimum_fixed_lookahead_m'] is None
+    recovery=[r for r in all_recovery if r['reference']=='same_fixed_lookahead']
+    assert recovery[0]['minimum_fixed_lookahead_m']==.11
+    assert recovery[1]['minimum_fixed_lookahead_m']==.33
+    assert recovery[1]['zero_noise_travel_time_s_mean']==20.
+    summary[-2]['travel_time_s_mean']=22.01
+    assert travel_time_recovery(summary,config)[-1]['minimum_fixed_lookahead_m'] is None
+
+
+def test_noise_lookahead_plots_all_levels_and_matching_estimate_lines(tmp_path, monkeypatch):
+    from omnidirectional_dwvp import access_plotting as plotting
+    captured={}
+    monkeypatch.setattr(plotting,'save',lambda fig,stem:captured.setdefault(stem.name,fig))
+    rows=[]
+    for scene in ('offset','gradual','rapid'):
+        for xy,yaw in ((0.,0.),(.002,.1),(.005,.2),(.01,.5),(.02,1.)):
+            for value in (.055,.6):
+                rows.append(dict(test='preview-noise',part='c',scenario=scene,method='dwvp',
+                                 parameter='fixed_lookahead',value=value,noise_xy_m=xy,noise_yaw_deg=yaw,
+                                 status='success',success=True,travel_time_s=25.+xy/value))
+    plotting.preview_noise_figures(tmp_path,rows,Config())
+    assert len(captured)==4
+    for scene in ('offset','gradual','rapid'):
+        ax=captured[scene+'_travel_time_vs_fixed_lookahead'].axes[0]
+        assert ax.get_title()=='' and ax.get_legend() is None
+        assert len(ax.lines)==10
+        for i,xy in enumerate((0.,.002,.005,.01,.02)):
+            curve,estimate=ax.lines[2*i:2*i+2]
+            np.testing.assert_allclose(curve.get_xdata(),[.055,.6])
+            np.testing.assert_allclose(estimate.get_xdata(),[30*xy]*2)
+            assert curve.get_color()==estimate.get_color() and estimate.get_linestyle()==':'
+    assert len(captured['noise_lookahead_legend'].legends[0].get_texts())==6
+    for fig in captured.values():
+        plotting.plt.close(fig)
 
 
 def test_aggregate_retains_timeout_metrics_and_missing_counts():

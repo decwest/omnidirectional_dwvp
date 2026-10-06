@@ -93,11 +93,11 @@ available, defaulting to `results/legacy/`. Saved `results/paper/` is preserved.
 | `test1` | 16 conditions: four initial lateral offsets; DWPP, Clipped VP, Scaled VP, DWVP | `test1/` |
 | `test2` | 176 conditions: nine nominal heading ramps, one step, and acceleration sweeps; Clipped VP, Scaled VP, Scaled VP (vel. and acc.), DWVP | `test2/` |
 | `test3` | 4 conditions: obstacle proximity regulation on/off; RPP and DWVP; goal approach regulation always enabled | `test3/` |
-| `test4` | (a) Each VP baseline matched to DWVP travel time, (b) preview (110), (c) localization noise (1000) | `test4/` |
+| `test4` | (a) Each VP baseline matched to DWVP travel time, (b) preview (120), (c) localization noise (1000) | `test4/` |
 | `acceleration-sweep` | Optional acceleration sweep (100), previously test4 (c); initial offset and two heading ramps | `acceleration-sweep/` |
 | `regulation-sweep` | Optional cost-distance, cost-gain and approach-distance sweep (36); Clipped VP, Scaled VP, DWVP | `regulation-sweep/` |
-| `preview-noise` | Optional full preview × noise grid, three representative paths | `preview-noise/` |
-| `all` | Four studies, every time-match candidate and all 20 noise seeds; excludes all three optional sweeps/grids | `test1/`–`test4/` |
+| `preview-noise` | Test 4(c) DWVP preview × noise grid (3600), also runnable separately | `preview-noise/` |
+| `all` | Four studies including preview × noise, every time-match candidate and all 20 noise seeds; excludes regulation and acceleration optional sweeps | `test1/`–`test4/`, `preview-noise/` |
 
 `configs/access_v2.yaml` contains controller settings and the complete study grid.
 The default profile uses 0.22 m/s VP demand and adaptive preview time 0.75 s,
@@ -209,7 +209,7 @@ the same factor, leaving acceleration and yaw limits fixed. Its sequential searc
 retains every candidate, including timeouts, and records achieved timing error
 under `time_matches.vp` and `time_matches.vp_scaled` in the manifest.
 A tolerance of one control period is used. Test2 crosses interval length and
-acceleration; preview × noise is an optional crossed grid. The representative conditions are
+acceleration; preview × noise is included in `all` as part of Test 4(c). The representative conditions are
 initial offset 0.50 m and orientation intervals 1.0 m and 0.3 m. All approach
 distances in the RPP sweep are positive (0.1, 0.3, 0.6 and 1.0 m). Noise is independent
 Gaussian observation noise each cycle; true pose and measured velocity remain
@@ -217,13 +217,29 @@ exact. Noise seeds 0–19 are paired across methods and conditions. Zero-noise
 seeds repeat the deterministic case and are not independent replications.
 
 Each output directory contains a per-trial `summary.csv` and PDF/PNG figures.
-`test4/noise_summary.csv` and optional `preview-noise/nominal_selection.csv` contain means, sample
+`test4/noise_summary.csv` and `preview-noise/nominal_selection.csv` contain means, sample
 standard deviations, metric-wise finite counts, successes, failures, timeouts and
 evaluation completion counts. Statistics include observed failed/timeout runs;
-undefined metrics remain missing. The optional report covers all 55 preview/noise
-combinations and all three representative paths. Run it with `uv run --offline --locked
+undefined metrics remain missing. The report covers all 60 preview/noise
+combinations (eight fixed distances 0.055–0.6 m, four adaptive times 0.5–1.5 s,
+five paired position/yaw noise levels) and all three representative paths.
+Run the grid alone with `uv run --offline --locked
 --python 3.11.11 dwvp-study preview-noise --config configs/access_v2.yaml
 --output results/preview-noise --seed 0 --workers 4`.
+
+Test 4(c) includes a noise × preview table for each scene, with mean travel times
+and success counts. The three `preview-noise/*_travel_time_vs_fixed_lookahead`
+PDF/PNG panels use one line per noise level and same-color dotted references
+at `L = V sigma_xy / (ay dt) = 30 sigma_xy`; their horizontal legend is separate.
+This estimate compares lateral velocity jitter with the one-cycle acceleration
+allowance; it omits the difference of independent noise samples, yaw noise and
+terminal behavior. `travel_time_recovery.csv` records the smallest sampled fixed
+distance whose mean time is at most 1.1 times the zero-noise mean in the same
+scene, using both the **nominal adaptive preview** (`reference=nominal_preview`)
+and the **same fixed distance** (`reference=same_fixed_lookahead`) as references,
+requiring 20/20 successes in both conditions. Missing
+recovery stays blank. This is a sampled threshold, not a guarantee. Adaptive
+preview retains its existing 0.11–0.33 m limits.
 
 `manifest.json` records all planned conditions, full configurations, seeds, source
 and dependency hashes, outcomes and elapsed time. Partial runs use
@@ -321,7 +337,7 @@ all-zero version; regression tests retain the supplied 0.3 m reference values
 with their original 0.33 m cap.
 
 Validate a completed run with `uv run --offline --locked --python 3.11.11 python tools/validate_access_v2.py results/access_v2`;
-use `--study preview-noise` or `--study regulation-sweep` for an optional grid. Use the existing locked environment.
+use `--study preview-noise` for the grid alone or `--study regulation-sweep` for the optional regulation sweep. Use the existing locked environment.
 The saved results of this configuration are in `results/access_v2/`.
 
 Figures require installed Times New Roman, use STIX math and PDF font type 42,

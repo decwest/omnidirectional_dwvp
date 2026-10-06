@@ -8,8 +8,8 @@ from pathlib import Path
 import subprocess
 from time import perf_counter
 import numpy as np
-from omnidirectional_dwvp.access_studies import numerical_hash, plan_conditions
-from omnidirectional_dwvp.access_metrics import COMMON_METRICS
+from omnidirectional_dwvp.access_studies import numerical_hash, plan_conditions, selected_studies
+from omnidirectional_dwvp.access_metrics import COMMON_METRICS, aggregate
 from omnidirectional_dwvp.config import Config
 from omnidirectional_dwvp.geometry import wrap
 from omnidirectional_dwvp.studies import ROOT, code_hash, sha
@@ -79,7 +79,7 @@ def main():
     assert planned==saved
     assert set(saved.values())=={1}
     rows=[]
-    selected=tuple(f'test{i}' for i in range(1,5)) if args.study=='all' else (args.study,)
+    selected=selected_studies(args.study)
     expected,_=plan_conditions(Config(**manifest['config']),manifest['settings'],manifest['seed'],selected)
     assert Counter(sha(c) for c in expected)==Counter(t['condition_id'] for t in manifest['trials'] if t['condition']['part']!='a')
     for test in selected:
@@ -89,14 +89,19 @@ def main():
         rows.extend(data)
     assert not any(r['part']=='f' for r in rows)
     assert (any(r['part']=='d' for r in rows)) == (args.study=='regulation-sweep')
-    assert (any(r['part']=='g' for r in rows)) == (args.study=='preview-noise')
-    noise=[r for r in rows if (r['test']=='test4' and r['part']=='c') or r['part']=='g']
+    assert not any(r['part']=='g' for r in rows)
+    noise=[r for r in rows if (r['test']=='test4' and r['part']=='c') or r['test']=='preview-noise']
     groups={}
     for row in noise:
         key=tuple(row[k] for k in ('scenario','method','parameter','value','noise_xy_m','noise_yaw_deg'))
         groups.setdefault(key,[]).append(int(row['seed']))
-    assert len(groups)==(165 if args.study=='preview-noise' else 50 if 'test4' in selected else 0)
+    expected_groups=(50 if 'test4' in selected else 0)
+    if 'preview-noise' in selected:
+        expected_groups+=3*len(manifest['settings']['noise_levels'])*(len(manifest['settings']['fixed_lookaheads'])+len(manifest['settings']['lookahead_times']))
+    assert len(groups)==expected_groups
     assert all(sorted(v)==list(range(manifest['seed'],manifest['seed']+manifest['settings']['noise_seeds'])) for v in groups.values())
+    if 'preview-noise' in selected:
+        validate_preview_noise(root, manifest)
     if 'test1' in selected:
         assert len([r for r in rows if r['test']=='test1'])==16
     if 'test2' in selected:
@@ -107,7 +112,8 @@ def main():
         assert len([r for r in rows if r['test']=='test3'])==4
         assert {r['method'] for r in rows if r['test']=='test3'}=={'rpp','dwvp'}
     if 'test4' in selected:
-        assert {p:sum(r['test']=='test4' and r['part']==p for r in rows) for p in 'bcde'}==dict(b=110,c=1000,d=0,e=0)
+        previews=len(manifest['settings']['fixed_lookaheads'])+len(manifest['settings']['lookahead_times'])
+        assert {p:sum(r['test']=='test4' and r['part']==p for r in rows) for p in 'bcde'}==dict(b=10*previews,c=1000,d=0,e=0)
         assert not any(r['test']=='test4' and r['parameter'] in ('acceleration_scale','angular_acceleration_scale') for r in rows)
         assert set(manifest['time_matches'])=={'vp','vp_scaled'}
         for method, match in manifest['time_matches'].items():
@@ -292,7 +298,6 @@ def main():
     if 'test4' in selected:
         section=report.split('## 試験4：')[1].split('\n## ')[0]
         assert '整定時間 [s]' in section and '(d)' not in section and '(e)' not in section
-        assert '加速度' not in section
         for title in ('### (a) 走行時間を揃えた比較', '### (b) 前方注視', '### (c) 自己位置推定のノイズ'):
             assert title in section
     if 'test2' in selected:
@@ -339,6 +344,72 @@ def main():
                  audit_wall_time_s=perf_counter()-start)
     (root/'validation.json').write_text(json.dumps(summary,indent=2)+'\n')
     print(json.dumps(summary,indent=2))
+
+
+def validate_preview_noise(root, manifest):
+    """Recompute every grid aggregate and recovery threshold from saved rows."""
+    directory=root/'preview-noise'
+    assert directory.is_dir() and not directory.is_symlink()
+    trials=[t['summary'] for t in manifest['trials'] if t['condition']['test']=='preview-noise']
+    assert all(r['method']=='dwvp' and r['part']=='c' for r in trials)
+    keys=('part','scenario','method','parameter','value','noise_xy_m','noise_yaw_deg')
+    expected=aggregate(trials,keys)
+    with (directory/'nominal_selection.csv').open() as stream:
+        saved=list(csv.DictReader(stream))
+    assert len(saved)==len(expected)
+    for left,right in zip(saved,expected):
+        assert set(left)==set(right)
+        for key,value in right.items():
+            if value is None:
+                assert left[key]==''
+            elif isinstance(value,(int,float)):
+                np.testing.assert_allclose(float(left[key]),value,rtol=0,atol=1e-10)
+            else:
+                assert left[key]==value
+    with (directory/'travel_time_recovery.csv').open() as stream:
+        recovery=list(csv.DictReader(stream))
+    fixed=[r for r in expected if r['parameter']=='fixed_lookahead']
+    zero={(r['scenario'],r['value']):r for r in fixed if r['noise_xy_m']==r['noise_yaw_deg']==0}
+    identities={(kind,r['scenario'],r['noise_xy_m'],r['noise_yaw_deg'])
+                for kind in ('nominal_preview','same_fixed_lookahead') for r in fixed}
+    assert len(recovery)==len(identities)
+    assert {(r['reference'],r['scenario'],float(r['noise_xy_m']),float(r['noise_yaw_deg'])) for r in recovery}==identities
+    cfg=Config(**manifest['config'])
+    parameter,value=('lookahead_time',cfg.lookahead_time) if cfg.fixed_lookahead is None else ('fixed_lookahead',cfg.fixed_lookahead)
+    nominal={r['scenario']:r for r in expected if r['noise_xy_m']==r['noise_yaw_deg']==0
+             and (r['parameter'],r['value'])==(parameter,value)}
+    report=(root/'REPORT.md').read_text()
+    for row in recovery:
+        identity=row['scenario'],float(row['noise_xy_m']),float(row['noise_yaw_deg'])
+        candidates=[]
+        for r in fixed:
+            if (r['scenario'],r['noise_xy_m'],r['noise_yaw_deg'])!=identity:
+                continue
+            baseline=nominal.get(r['scenario']) if row['reference']=='nominal_preview' else zero[r['scenario'],r['value']]
+            if baseline is None:
+                continue
+            if (all(g['n']==g['success_count']==g['travel_time_s_n'] for g in (r,baseline))
+                    and r['travel_time_s_mean']<=1.1*baseline['travel_time_s_mean']+1e-10):
+                candidates.append(r)
+        np.testing.assert_allclose(float(row['estimate_lookahead_m']),cfg.translation_speed*identity[1]/(cfg.ay/cfg.frequency))
+        if candidates:
+            best=min(candidates,key=lambda r:r['value'])
+            assert float(row['minimum_fixed_lookahead_m'])==best['value']
+            for key in ('travel_time_s_mean','success_count','n'):
+                np.testing.assert_allclose(float(row[key]),best[key])
+            baseline=nominal[best['scenario']] if row['reference']=='nominal_preview' else zero[best['scenario'],best['value']]
+            np.testing.assert_allclose(float(row['zero_noise_travel_time_s_mean']),baseline['travel_time_s_mean'])
+        else:
+            assert all(row[key]=='' for key in ('minimum_fixed_lookahead_m','travel_time_s_mean',
+                                               'zero_noise_travel_time_s_mean','success_count','n'))
+    for scene in {r['scenario'] for r in trials}:
+        assert f'| {scene}: σ_xy [m] / σ_yaw [°]' in report
+        for ext in ('pdf','png'):
+            assert (directory/f'{scene}_travel_time_vs_fixed_lookahead.{ext}').exists()
+    for ext in ('pdf','png'):
+        assert (directory/f'noise_lookahead_legend.{ext}').exists()
+    assert '## 任意試験：前方注視×ノイズ' not in report
+    assert '1.1倍以内' in report and 'L≥Vσ_xy/(aΔt)' in report
 
 
 if __name__=='__main__':
