@@ -33,7 +33,7 @@ def simulate(path, method="dwvp", config=Config(), obstacles=(), seed=0, initial
     pose = np.zeros(3) if initial_pose is None else np.array(initial_pose, dtype=float, copy=True)
     if pose.shape != (3,) or not np.all(np.isfinite(pose)):
         raise ValueError("initial_pose must be a finite [x,y,yaw] pose")
-    goal_yaw = terminal_heading(path) if method == "dwpp" else path[-1, 2]
+    goal_yaw = terminal_heading(path) if method in ("dwpp", "rpp") else path[-1, 2]
     current = np.zeros(3)
     rng = np.random.default_rng(seed)
     poses, applied, demands, commands, boxes, caps, looks, durations, modes, clearances = [pose.copy()], [], [], [], [], [], [], [], [], []

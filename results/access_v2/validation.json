@@ -1,9 +1,9 @@
 {
-  "conditions": 1465,
-  "distinct_trial_specs": 1399,
+  "conditions": 1427,
+  "distinct_trial_specs": 1370,
   "selection_groups": 50,
   "statuses": {
-    "success": 1422,
+    "success": 1384,
     "timeout": 43
   },
   "report_lines": 240,
@@ -16,17 +16,6 @@
   "max_velocity_excess": 0.0,
   "max_acceleration_excess": 1.1102230246251565e-15,
   "max_dynamic_window_excess": 0.0,
-  "baseline_comparison": {
-    "baseline_sha256": "3f29e17777fcbda6845cee6a16d6162d79fa0fb37d6fc4782c551d0fb2e7d539",
-    "baseline_source_sha256": "9405764e7c3dd932226da8a1175b25ea0b0ad95713fbb44ae3987cbbd4f25621",
-    "matched_conditions": 916,
-    "baseline_conditions": 904,
-    "preserved_baseline_conditions": 904,
-    "missing_baseline_conditions": [],
-    "unmatched_conditions": 549,
-    "changed_conditions": 0,
-    "reported_changes": [],
-    "changed_groups": {}
-  },
-  "audit_wall_time_s": 7.510353351011872
+  "baseline_comparison": null,
+  "audit_wall_time_s": 8.994805143971462
 }

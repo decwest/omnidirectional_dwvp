@@ -5,13 +5,14 @@ import hashlib
 import json
 import os
 import platform
+import shutil
 import sys
 import traceback
 import numpy as np
 from .config import Config
 from .geometry import Obstacle
 from .paths import straight_path, orientation_ramp_path
-from .simulation import simulate
+from .simulation import Result, simulate
 from .access_metrics import evaluate, aggregate
 from .studies import ROOT, code_hash, sha, git_revision, cpu_model, write_csv
 
@@ -69,7 +70,7 @@ def plan_conditions(config, settings, seed, selected):
     if config.approach_distance <= 0 or any(x <= 0 for x in settings['approach_distances']):
         raise ValueError('Straight-path studies require goal approach regulation')
     for cost in (False, True):
-        add('test3', 'nominal', obstacle, both, replace(config, use_cost_regulation=cost),
+        add('test3', 'nominal', obstacle, ('rpp', 'dwvp'), replace(config, use_cost_regulation=cost),
             'regulation', f'cost={int(cost)},approach=1')
     lookaheads = [('fixed_lookahead', x) for x in settings['fixed_lookaheads']]
     lookaheads += [('lookahead_time', x) for x in settings['lookahead_times']]
@@ -87,7 +88,7 @@ def plan_conditions(config, settings, seed, selected):
                 add('test4', 'c', scene, ('dwpp', *both) if scene['kind']=='offset' else both, cfg, parameter, value)
     for parameter, key in (('cost_scaling_dist', 'cost_distances'), ('cost_scaling_gain', 'cost_gains'), ('approach_distance', 'approach_distances')):
         for value in settings[key]:
-            add('test4', 'd', obstacle, both, replace(config, use_cost_regulation=True, **{parameter: value}), parameter, value)
+            add('regulation-sweep', 'd', obstacle, both, replace(config, use_cost_regulation=True, **{parameter: value}), parameter, value)
     seeds = range(seed, seed + settings['noise_seeds'])
     for xy, yaw_deg in settings['noise_levels']:
         cfg = replace(config, noise_xy=xy, noise_yaw=float(np.deg2rad(yaw_deg)))
@@ -99,7 +100,22 @@ def plan_conditions(config, settings, seed, selected):
     return conditions, representatives
 
 
-def execute_trial(condition, output, numerical_source_hash, force=False):
+def reuse_key(condition):
+    """Match a saved round-2 condition while allowing only the preview cap to change."""
+    return sha({**condition, 'config': {k: v for k, v in condition['config'].items()
+                                      if k != 'lookahead_max'}})
+
+
+def reusable_lookahead(history, old_config, new_config):
+    """A tighter inactive cap preserves the full deterministic/noisy state history."""
+    before, after = asdict(old_config), asdict(new_config)
+    old_cap, new_cap = before.pop('lookahead_max'), after.pop('lookahead_max')
+    return (before == after and new_cap <= old_cap and
+            (new_config.fixed_lookahead is not None or
+             bool(np.all(history['lookahead'] <= new_cap))))
+
+
+def execute_trial(condition, output, numerical_source_hash, force=False, reuse=None):
     cfg = Config(**condition['config'])
     scene = condition['scenario']
     path = (orientation_ramp_path(scene['transition_length'], condition['path_length'], condition['path_spacing'], condition['ramp_start'])
@@ -122,12 +138,33 @@ def execute_trial(condition, output, numerical_source_hash, force=False):
         directory.mkdir(parents=True, exist_ok=True)
         started = perf_counter()
         try:
-            result = simulate(path, condition['method'], cfg, obstacles, condition['seed'], initial_pose=initial)
+            reused = None
+            if reuse is not None and condition['test'] != 'test3':
+                root, original = reuse
+                old_id = original['summary']['trial_id']
+                old_path = root/'trials'/old_id/'trajectory.npz'
+                if old_path.exists():
+                    old_metadata = json.loads((old_path.parent/'trial.json').read_text())
+                    expected = {**original['spec'], 'config': asdict(cfg),
+                                'numerical_source_sha256': numerical_source_hash}
+                    assert expected == spec, 'Reuse must preserve every other simulation input'
+                    with np.load(old_path) as history:
+                        if reusable_lookahead(history, Config(**original['spec']['config']), cfg):
+                            result = Result({k: history[k] for k in history}, old_metadata['metrics'], old_metadata['performance'])
+                            reused = dict(trial_id=old_id, trajectory_sha256=hashlib.sha256(old_path.read_bytes()).hexdigest(),
+                                          max_lookahead_m=float(history['lookahead'].max()))
+            if reused is None:
+                result = simulate(path, condition['method'], cfg, obstacles, condition['seed'], initial_pose=initial)
             metrics = evaluate(result, cfg, scene, initial, condition['evaluation_end'], condition['ramp_start'])
             trajectory_temp = directory / f'trajectory.{os.getpid()}.npz'
-            np.savez_compressed(trajectory_temp, **result.arrays)
+            if reused is None:
+                np.savez_compressed(trajectory_temp, **result.arrays)
+            else:
+                shutil.copyfile(old_path, trajectory_temp)
             trajectory_temp.replace(directory / 'trajectory.npz')
             saved = dict(spec=spec, trial_id=identity, metrics=metrics, performance=result.performance)
+            if reused is not None:
+                saved['trajectory_reuse'] = reused
         except Exception as exc:
             saved = dict(spec=spec, trial_id=identity, metrics=dict(success=False, timeout=False, status='error',
                          collision=False, error=f'{type(exc).__name__}: {exc}'), traceback=traceback.format_exc(), performance={})
@@ -145,7 +182,8 @@ def execute_trial(condition, output, numerical_source_hash, force=False):
     return row, spec, cache
 
 
-def run(study, output, config, settings, seed=0, force=False, config_path=None, workers=1, baseline=None):
+def run(study, output, config, settings, seed=0, force=False, config_path=None, workers=1, baseline=None,
+        reuse_from=None):
     from concurrent.futures import ProcessPoolExecutor
     from .access_plotting import figures
     from .access_report import report
@@ -155,6 +193,11 @@ def run(study, output, config, settings, seed=0, force=False, config_path=None, 
     conditions, representatives = plan_conditions(config, settings, seed, selected)
     source = code_hash()
     numerical_source = numerical_hash()
+    previous = json.loads(reuse_from.read_text()) if reuse_from is not None else None
+    reuse_index = {reuse_key(t['condition']): t for t in previous['trials']} if previous else {}
+    def reuse_for(condition):
+        trial = reuse_index.get(reuse_key(condition))
+        return (output, trial) if trial is not None else None
     manifest = dict(schema_version=4, study=study, suite='access_v2', source_sha256=source, numerical_source_sha256=numerical_source,
                     git_revision=git_revision(), python=sys.version, numpy=np.__version__, platform=platform.platform(),
                     cpu_model=cpu_model(), workers=workers, config=asdict(config), settings=settings, seed=seed,
@@ -168,6 +211,8 @@ def run(study, output, config, settings, seed=0, force=False, config_path=None, 
                            'PP uses position only, including the final positional tangent for terminal yaw.',
                            'Raw mixed-unit solver objective is unchanged; reported direction angles use per-axis normalization.'])
     target = output/('manifest.json' if study=='all' else f'manifest_{study}.json')
+    if previous:
+        manifest['trajectory_reuse_baseline_sha256'] = hashlib.sha256(reuse_from.read_bytes()).hexdigest()
     atomic_json(target, manifest)
     rows = []
     last_log = perf_counter()
@@ -191,7 +236,7 @@ def run(study, output, config, settings, seed=0, force=False, config_path=None, 
                           vp_translation_speed=config.translation_speed*scale, desired_linear_vel=config.desired_linear_vel*scale)
             c = make_condition('test4', 'a', rapid, method, cfg, seed, settings, parameter, scale)
             manifest['planned_conditions'].append(c)
-            return accept(c, execute_trial(c, output, numerical_source, force))
+            return accept(c, execute_trial(c, output, numerical_source, force, reuse_for(c)))
         reference = matched('dwvp', 1., 'match_reference')
         manifest['time_matches'] = {}
         for method in ('vp', 'vp_scaled'):
@@ -224,11 +269,12 @@ def run(study, output, config, settings, seed=0, force=False, config_path=None, 
     batch = conditions
     if workers == 1:
         for c in batch:
-            accept(c, execute_trial(c, output, numerical_source, force))
+            accept(c, execute_trial(c, output, numerical_source, force, reuse_for(c)))
     else:
         with ProcessPoolExecutor(max_workers=workers) as pool:
             from itertools import repeat
-            for c, result in zip(batch, pool.map(execute_trial, batch, repeat(output), repeat(numerical_source), repeat(force), chunksize=1)):
+            for c, result in zip(batch, pool.map(execute_trial, batch, repeat(output), repeat(numerical_source),
+                                               repeat(force), map(reuse_for, batch), chunksize=1)):
                 accept(c, result)
     for test in selected:
         directory = output/test

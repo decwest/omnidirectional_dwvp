@@ -11,6 +11,22 @@ COMMON_METRICS = ('eval_max_position_error_m', 'eval_mean_position_error_m',
                   'command_constraint_violation_pct', 'travel_time_s')
 
 
+def constraint_violation_counts(velocities, previous, config):
+    """Count physical velocity and one-step acceleration excess separately.
+
+    Use the demand metric's velocity tolerance, including for the acceleration
+    step. The union counts a cycle once even if both constraints are exceeded.
+    """
+    velocity = np.any((velocities < config.lower - TOLERANCE) |
+                      (velocities > config.upper + TOLERANCE), axis=1)
+    acceleration = np.any(np.abs(velocities - previous) >
+                          config.acceleration * config.dt + TOLERANCE, axis=1)
+    return dict(velocity_violation_steps=int(velocity.sum()),
+                acceleration_violation_steps=int(acceleration.sum()),
+                both_violation_steps=int((velocity & acceleration).sum()),
+                violation_steps=int((velocity | acceleration).sum()))
+
+
 def time_error_metrics(times, errors, mask):
     """Trapezoids on adjacent in-window samples; never bridge excluded intervals.
 
@@ -146,6 +162,17 @@ def evaluate(result, config, scenario, initial_pose, evaluation_end, ramp_start)
                      transition_max_yaw_rate_rad_s=float(np.abs(u[transition, 2]).max()))
     commands = a['commands']
     previous = np.vstack((np.zeros(3), u[:-1])) if len(u) else np.empty((0, 3))
+    m['control_steps'] = len(u)
+    for label, velocities in (('demand', a['demands']), ('command', commands)):
+        m.update({f'{label}_{key}': value for key, value in
+                  constraint_violation_counts(velocities, previous, config).items()})
+    m['lookahead_min_m'] = float(a['lookahead'].min()) if len(u) else None
+    m['lookahead_max_m'] = float(a['lookahead'].max()) if len(u) else None
+    raw_lookahead = config.lookahead_time * np.linalg.norm(previous[:, :2], axis=1)
+    m['lookahead_upper_active_steps'] = (int(np.sum(raw_lookahead > config.lookahead_max + TOLERANCE))
+                                        if config.fixed_lookahead is None else 0)
+    m['lookahead_at_upper_steps'] = (int(np.sum(a['lookahead'] >= config.lookahead_max - TOLERANCE))
+                                    if config.fixed_lookahead is None else 0)
     acceleration = (commands - previous) / config.dt
     velocity_excess = np.maximum(np.maximum(config.lower - commands, commands - config.upper), 0.)
     acceleration_excess = np.maximum(np.abs(acceleration) - config.acceleration, 0.)

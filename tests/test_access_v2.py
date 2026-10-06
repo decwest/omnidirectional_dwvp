@@ -45,12 +45,13 @@ def test_dwpp_original_kernel_and_full_command_snapshots():
         assert out.command[1]==0
 
 
-def test_dwpp_ignores_reference_yaw_including_terminal():
+@pytest.mark.parametrize('method', ['dwpp', 'rpp'])
+def test_differential_methods_ignore_reference_yaw_including_terminal(method):
     path=straight_path(length=1.)
     changed=path.copy();changed[:,2]=np.linspace(.5,1.7,len(path))
     config=Config(lookahead_time=.75)
-    a=simulate(path,'dwpp',config)
-    b=simulate(changed,'dwpp',config)
+    a=simulate(path,method,config)
+    b=simulate(changed,method,config)
     np.testing.assert_array_equal(a.arrays['applied'],b.arrays['applied'])
     assert a.metrics['success'] and b.metrics['success']
     assert np.all(a.arrays['applied'][:,0]>=0)
@@ -113,7 +114,7 @@ def test_noise_and_selection_grid_keep_all_twenty_seeds():
     profile=yaml.safe_load((ROOT/'configs/access_v2.yaml').read_text())
     settings=profile.pop('study')
     conditions,_=plan_conditions(Config(**profile),settings,0,tuple(f'test{i}' for i in range(1,5)))
-    assert not any(c['part'] in ('f','g') for c in conditions)
+    assert not any(c['part'] in ('d','f','g') for c in conditions)
     optional,_=plan_conditions(Config(**profile),settings,0,('preview-noise',))
     g=[c for c in optional if c['part']=='g']
     e=[c for c in conditions if c['part']=='e']
@@ -121,11 +122,14 @@ def test_noise_and_selection_grid_keep_all_twenty_seeds():
     assert set(c['seed'] for c in g)==set(range(20))
     assert len([c for c in conditions if c['test']=='test1'])==16
     assert len([c for c in conditions if c['test']=='test2'])==176
-    assert len([c for c in conditions if c['test']=='test3'])==6
+    assert len([c for c in conditions if c['test']=='test3'])==4
+    assert {c['method'] for c in conditions if c['test']=='test3'}=={'rpp','dwvp'}
     assert all(c['config']['approach_distance']>0 for c in conditions)
     assert len([c for c in conditions if c['test']=='test2' and c['part']=='step'])==4
-    assert set(c['part'] for c in conditions if c['test']=='test4')==set('bcde')
-    assert len(conditions)==1444
+    assert set(c['part'] for c in conditions if c['test']=='test4')==set('bce')
+    assert len(conditions)==1406
+    optional,_=plan_conditions(Config(**profile),settings,0,('regulation-sweep',))
+    assert len(optional)==36 and {c['part'] for c in optional}=={'d'}
     sweep=[c for c in conditions if c['test']=='test2' and c['part']=='acceleration']
     assert len(sweep)==136
     assert {c['method'] for c in sweep}=={'vp','vp_scaled','vp_scaled_accel','dwvp'}
@@ -177,7 +181,7 @@ def test_clipped_vp_nonintersection_is_geometric_not_solver_mode():
 
 def test_evaluation_window_precedes_swept_goal_regulation():
     profile=yaml.safe_load((ROOT/'configs/access_v2.yaml').read_text());settings=profile.pop('study')
-    conditions,_=plan_conditions(Config(**profile),settings,0,('test4',))
+    conditions,_=plan_conditions(Config(**profile),settings,0,('regulation-sweep',))
     condition=next(c for c in conditions if c['parameter']=='approach_distance' and c['value']==1.)
     assert condition['evaluation_end']==pytest.approx(2.995)
 
@@ -304,7 +308,8 @@ def test_time_integral_handles_stationary_motion_nonuniform_samples_and_gaps():
 ])
 def test_saved_brief_overshoot_values_reproduced_by_unchanged_controllers(scale,method,expected):
     profile=yaml.safe_load((ROOT/'configs/access_v2.yaml').read_text());profile.pop('study')
-    cfg=replace(Config(**profile),ax=profile['ax']*scale,ay=profile['ay']*scale,aw=profile['aw']*scale)
+    # The restored profile preserves the historical 0.33 m cap.
+    cfg=replace(Config(**profile),lookahead_max=.33,ax=profile['ax']*scale,ay=profile['ay']*scale,aw=profile['aw']*scale)
     result=simulate(orientation_ramp_path(.3),method,cfg)
     metrics=evaluate(result,cfg,{'transition_length':.3},[0.,0.,0.],3.25,1.)
     assert metrics['post_transition_heading_overshoot_deg']==pytest.approx(expected,abs=.051)
@@ -333,3 +338,93 @@ def test_baseline_comparison_keeps_existing_position_error_and_checks_missing_co
     comparison=compare_baseline(tmp_path,{'trials':[current]},baseline)
     assert comparison['changed_conditions']==1
     assert comparison['reported_changes'][0]['metric']=='eval_max_position_error_m'
+
+
+@pytest.mark.parametrize('offset', [-.05, 0., .05, .3])
+def test_rpp_pp_curvature_without_curvature_speed_regulation(offset):
+    cfg=Config(fixed_lookahead=.2,ax=100.,aw=100.)
+    path=straight_path()
+    out=compute_command(np.array([0.,offset,0.]),np.zeros(3),path,path[:,0],'rpp',cfg)
+    distance=max(.2,abs(offset))
+    curvature=-2*offset/distance**2
+    np.testing.assert_allclose(out.desired,[.22,0.,curvature*.22],atol=1e-14)
+    dwpp=compute_command(np.array([0.,offset,0.]),np.zeros(3),path,path[:,0],'dwpp',cfg)
+    assert out.desired[2]/out.desired[0]==pytest.approx(dwpp.desired[2]/dwpp.desired[0])
+
+
+def test_rpp_cost_and_approach_regulation_and_component_clipping():
+    from omnidirectional_dwvp.geometry import Obstacle
+    cfg=Config(use_cost_regulation=True,fixed_lookahead=.11)
+    path=straight_path()
+    pose=np.array([1.,.05,0.])
+    current=np.zeros(3)
+    obstacle=(Obstacle(1.,-.2,.1),)
+    out=compute_command(pose,current,path,path[:,0],'rpp',cfg,obstacle)
+    assert out.speed_cap==pytest.approx(cfg.nominal_speed*.15/cfg.cost_scaling_dist)
+    assert out.desired[0]==pytest.approx(cfg.vx_max*.15/cfg.cost_scaling_dist)
+    np.testing.assert_array_equal(out.command,np.clip(out.desired,out.lower,out.upper))
+    assert out.command[0]<out.desired[0] and abs(out.command[2])<abs(out.desired[2])
+    assert out.mode=='clipping' and out.command[1]==0.
+    fast=compute_command(pose,np.array([.15,0.,0.]),path,path[:,0],'rpp',cfg,obstacle)
+    np.testing.assert_array_equal(fast.desired,out.desired)
+    assert fast.command[0]>=.15-cfg.ax*cfg.dt-1e-12  # Reachable braking after abrupt regulation.
+    goal=compute_command(np.array([3.7,0.,0.]),current,path,path[:,0],'rpp',cfg)
+    assert goal.desired[0]==pytest.approx(cfg.vx_max*.3/cfg.approach_distance)
+
+
+def test_rpp_terminal_braking_and_tangent_match_dwpp():
+    path=straight_path(heading=.4)
+    path[:,2]=1.7
+    cfg=Config()
+    pose=path[-1].copy();pose[2]=.2
+    current=np.array([.05,0.,.1])
+    arc=np.arange(len(path))*.005
+    rpp=compute_command(pose,current,path,arc,'rpp',cfg)
+    dwpp=compute_command(pose,current,path,arc,'dwpp',cfg)
+    assert rpp.mode==dwpp.mode=='terminal'
+    np.testing.assert_array_equal(rpp.desired,dwpp.desired)
+    np.testing.assert_array_equal(rpp.command,dwpp.command)
+    assert rpp.desired[0]==0. and rpp.command[0]>0.
+
+
+def test_rpp_records_unclipped_demand_violation():
+    cfg=Config(timeout=2.,approach_distance=0.)
+    result=simulate(straight_path(),'rpp',cfg)
+    np.testing.assert_allclose(result.arrays['demands'][:,0],cfg.vx_max)
+    assert result.metrics['unconstrained_demand_violation_pct']==pytest.approx(100*29/60)
+    assert result.metrics['velocity_violation_pct']==result.metrics['acceleration_violation_pct']==0.
+    metrics=evaluate(result,cfg,{'kind':'offset'},[0.,0.,0.],3.25,1.)
+    assert metrics['demand_velocity_violation_steps']==0
+    assert metrics['demand_acceleration_violation_steps']==metrics['demand_violation_steps']==29
+    assert metrics['command_violation_steps']==0
+
+
+def test_rpp_uses_regulated_x_limit_with_asymmetric_box_and_lower_nominal_cap():
+    cfg=Config(vx_min=-.3,vx_max=.2,vy_min=-.4,vy_max=.4,desired_linear_vel=.25)
+    path=straight_path()
+    out=compute_command(np.zeros(3),np.zeros(3),path,path[:,0],'rpp',cfg)
+    assert cfg.box_speed==.5
+    assert out.desired[0]==pytest.approx(.1)
+    # A stationary physical box enters terminal handling without division by zero.
+    stopped=replace(cfg,vx_min=0.,vx_max=0.,vy_min=0.,vy_max=0.)
+    out=compute_command(np.zeros(3),np.zeros(3),path,path[:,0],'rpp',stopped)
+    assert out.mode=='terminal' and np.isfinite(out.command).all()
+
+
+def test_constraint_breakdown_counts_overlap_once_and_uses_applied_previous_velocity():
+    from omnidirectional_dwvp.access_metrics import constraint_violation_counts
+    cfg=Config()
+    previous=np.array([[.22,0.,0.],[0.,0.,0.],[0.,0.,0.],[0.,0.,0.]])
+    velocities=np.array([[.221,0.,0.],[.02,0.,0.],[0.,0.,.7],[0.,0.,0.]])
+    assert constraint_violation_counts(velocities,previous,cfg)==dict(
+        velocity_violation_steps=2,acceleration_violation_steps=2,both_violation_steps=1,violation_steps=3)
+
+
+def test_saved_trajectory_reuse_rejects_active_cap_and_changed_inputs():
+    from omnidirectional_dwvp.access_studies import reusable_lookahead
+    cfg=Config(lookahead_max=.33)
+    new=replace(cfg,lookahead_max=.165)
+    assert reusable_lookahead({'lookahead':np.array([.11,.165])},cfg,new)
+    assert not reusable_lookahead({'lookahead':np.array([.17])},cfg,new)
+    assert not reusable_lookahead({'lookahead':np.array([.11])},cfg,replace(new,ax=.1))
+    assert reusable_lookahead({'lookahead':np.array([.44])},replace(cfg,fixed_lookahead=.44),replace(new,fixed_lookahead=.44))

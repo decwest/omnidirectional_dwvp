@@ -84,7 +84,7 @@ def write_csv(path, rows):
         return
     keys = list(dict.fromkeys(key for row in rows for key in row))
     with path.open("w", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=keys)
+        writer = csv.DictWriter(stream, fieldnames=keys, lineterminator='\n')
         writer.writeheader()
         writer.writerows(rows)
 
@@ -194,24 +194,26 @@ def execute(study, output, config, seed=0, force=False):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("study", choices=("all", "test1", "test2", "test3", "test4", "preview-noise", "legacy-all", "mechanism", "obstacles", "sweeps"), nargs="?", default="all")
+    parser.add_argument("study", choices=("all", "test1", "test2", "test3", "test4", "preview-noise", "regulation-sweep", "legacy-all", "mechanism", "obstacles", "sweeps"), nargs="?", default="all")
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument("--config", type=Path, default=None, help="YAML profile; access_v2 for all/test1..test4/preview-noise, paper for legacy commands")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--force", action="store_true", help="Recompute instead of resuming matching content-addressed trials")
     parser.add_argument("--workers", type=int, default=1, help="Independent simulation processes for test1..test4/preview-noise/all")
     parser.add_argument("--baseline", type=Path, help="Previous access manifest for condition-matched metric comparison")
+    parser.add_argument("--reuse-round2-baseline", type=Path,
+                        help="Saved manifest in this output tree; reuse trajectories only where the tighter lookahead cap is inactive")
     args=parser.parse_args()
     if args.workers < 1:
         parser.error("workers must be positive")
-    if args.study in {"all", "test1", "test2", "test3", "test4", "preview-noise"}:
+    if args.study in {"all", "test1", "test2", "test3", "test4", "preview-noise", "regulation-sweep"}:
         import yaml
         from .access_studies import run
         config_path = args.config or ROOT / "configs/access_v2.yaml"
         profile = yaml.safe_load(config_path.read_text())
         settings = profile.pop("study")
         run(args.study, args.output or ROOT / "results/access_v2", Config(**profile), settings,
-            args.seed, args.force, config_path, args.workers, args.baseline)
+            args.seed, args.force, config_path, args.workers, args.baseline, args.reuse_round2_baseline)
         return
     if args.study == "legacy-all":
         args.study = "all"

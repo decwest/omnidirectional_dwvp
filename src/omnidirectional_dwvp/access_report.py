@@ -12,6 +12,27 @@ def f(value, digits=3):
     return '—' if value is None else f'{value:.{digits}f}'
 
 
+def lookahead_ranges(rows):
+    """Full-run ranges; counts include every condition entry, including repeats."""
+    ranges = []
+    for test in dict.fromkeys(r['test'] for r in rows):
+        group = [r for r in rows if r['test'] == test and r.get('lookahead_min_m') is not None]
+        if not group:
+            continue
+        adaptive = [r for r in group if r['fixed_lookahead_m'] is None]
+        fixed = [r for r in group if r['fixed_lookahead_m'] is not None]
+        ranges.append(dict(test=test, minimum_m=min(r['lookahead_min_m'] for r in group),
+                           maximum_m=max(r['lookahead_max_m'] for r in group),
+                           adaptive_minimum_m=min((r['lookahead_min_m'] for r in adaptive), default=None),
+                           adaptive_maximum_m=max((r['lookahead_max_m'] for r in adaptive), default=None),
+                           fixed_minimum_m=min((r['lookahead_min_m'] for r in fixed), default=None),
+                           fixed_maximum_m=max((r['lookahead_max_m'] for r in fixed), default=None),
+                           upper_active_steps=sum(r['lookahead_upper_active_steps'] for r in adaptive),
+                           at_upper_steps=sum(r['lookahead_at_upper_steps'] for r in adaptive),
+                           adaptive_steps=sum(r['control_steps'] for r in adaptive)))
+    return ranges
+
+
 def prediction_comparison(output, rows, manifest):
     trials = {t['condition_id']: t for t in manifest['trials']}
     comparison = []
@@ -35,13 +56,20 @@ def prediction_comparison(output, rows, manifest):
 def report(output, rows, manifest):
     lines = ['# シミュレーション結果', '',
              f"条件数 {len(rows)}、保存試行ID {manifest['distinct_trajectories']}。成功 {manifest['success_count']}、タイムアウト {manifest['timeout_count']}、その他失敗 {manifest['failure_count']}。",
-             '設定は `manifest.json`、全条件の指標は `testN/summary.csv`。公称設定と制御器は変更していない。公称設定：30 Hz、速度上限 ±0.22 m/s・±0.6 rad/s、加速度上限 0.22 m/s²・0.6 rad/s²、所望並進速度 0.22 m/s、前方注視時間 0.75 s。',
-             '誤差の評価は従来どおり 0≤x≤3.25 m の保存試料。接近距離1 mの既存条件だけ上端2.995 m。境界への外挿はしない。',
+             f"設定は `manifest.json`、全条件の指標は各試験の `summary.csv`。既定の設定：30 Hz、速度上限 ±0.22 m/s・±0.6 rad/s、加速度上限 0.22 m/s²・0.6 rad/s²、VP所望並進速度 0.22 m/s、前方注視時間 0.75 s、前方注視距離上限 {manifest['config']['lookahead_max']:g} m（固定距離の掃引は別指定）。",
+             '誤差の評価は従来どおり 0≤x≤3.25 m の保存試料。接近距離1 mの既存条件だけ上端2.995 m。境界への外挿はしない。'
              '位置誤差は経路への距離、姿勢誤差は線分射影位置の参照姿勢との差の絶対値。積分は隣接する評価内試料間の台形則、平均は積分÷評価時間。',
              '走行時間と指令制約違反率は従来どおり全走行で評価する。時間は成功時だけ記録し、タイムアウトは空欄。制約違反は速度または加速度超過の周期数÷全周期数（閾値1e−10）。',
-             '位置の行き過ぎは初期横偏差と反対側への最大偏差。姿勢の遅れは姿勢変化区間内の参照−ロボットの最大値、行き過ぎは区間通過後のロボット−最終参照の最大値（いずれも非負）。',
-             '段差（ℓ=0）の遅れは変化直後の最初の試料。2%到達・整定指標と従来の試料平均はCSVに残す。最大姿勢変化は表では最大姿勢誤差として扱う。',
-             'vp=成分別クリップ、vp_scaled=速度箱への一様縮小後にクリップ、vp_scaled_accel=速度差も一様縮小する補助比較、dwvp=DWVP、dwpp=差動二輪DWPP。', '']
+             '位置の行き過ぎは初期横偏差と反対側への最大偏差。姿勢の遅れは姿勢変化区間内の参照−ロボットの最大値、行き過ぎは区間通過後のロボット−最終参照の最大値（いずれも非負）。'
+             '整定時間は横方向誤差が初期偏差の2%以内に入り、評価区間の終わりまで留まる時刻。評価区間未完走・未整定は空欄。段差（ℓ=0）の遅れは変化直後の最初の試料。',
+             'vp=成分別クリップ、vp_scaled=速度箱への一様縮小後にクリップ、vp_scaled_accel=速度差も一様縮小する補助比較、dwvp=DWVP、dwpp=差動二輪DWPP、rpp=差動二輪RPP。', '']
+    preview = lookahead_ranges(rows)
+    write_csv(output/'lookahead_ranges.csv', preview)
+    for item in preview:
+        fixed = (f"、適応 {f(item['adaptive_minimum_m'], 6)}–{f(item['adaptive_maximum_m'], 6)} m、固定 {f(item['fixed_minimum_m'], 6)}–{f(item['fixed_maximum_m'], 6)} m"
+                 if item['fixed_minimum_m'] is not None else '')
+        lines.append(f"試験{item['test'].removeprefix('test')}の実際の前方注視距離：{item['minimum_m']:.6f}–{item['maximum_m']:.6f} m{fixed}。適応距離を上限で切り詰めた周期 {item['upper_active_steps']}/{item['adaptive_steps']}（上限到達 {item['at_upper_steps']} 周期、全条件・全走行を集計）。")
+    lines.append('')
     chosen = lambda test: [r for r in rows if r['test'] == test]
     headers = ['最大位置 [m]', '平均位置 [m]', '位置積分 [m·s]', '最大姿勢 [°]', '平均姿勢 [°]', '姿勢積分 [°·s]', '走行時間 [s]']
     metrics = [m for m in COMMON_METRICS if m != 'command_constraint_violation_pct']
@@ -53,18 +81,22 @@ def report(output, rows, manifest):
         lines.extend('| '+' | '.join(map(str, row))+' |' for row in data)
         lines.append('')
     def common_table(prefix, group, extras=()):
-        violation = any(r.get('command_constraint_violation_pct', 0) > 0 for r in group)
+        def constraint(r):
+            key = 'unconstrained_demand_violation_pct' if r['method'] == 'rpp' else 'command_constraint_violation_pct'
+            return r.get(key, 0)
+        violation = any(constraint(r) > 0 for r in group)
         extra_headers = [label for _, label, _ in extras]
         data = []
         for r in group:
             data.append([*[r[k] for k, _ in prefix], *[f(r.get(k), d) for k, d in zip(metrics, digits)],
                          *[f(r.get(k), d) for k, _, d in extras],
-                         *([f(r.get('command_constraint_violation_pct'))] if violation else [])])
+                         *([f(constraint(r))] if violation else [])])
         table([*[label for _, label in prefix], *headers, *extra_headers,
                *(['指令制約違反 [%]'] if violation else [])], data)
         if not violation:
             lines.append('この表の全手法・全条件で、指令が制約を超えた周期の割合は0%。')
-    lateral = (('crossing_m', '位置行き過ぎ [m]', 5),)
+    lateral = (('crossing_m', '位置行き過ぎ [m]', 5),
+               ('settling_2pct_time_s', '整定時間 [s]', 2))
     heading = (('transition_heading_lag_deg', '姿勢遅れ [°]', 2),
                ('post_transition_heading_overshoot_deg', '姿勢行き過ぎ [°]', 2))
     if chosen('test1'):
@@ -116,14 +148,26 @@ def report(output, rows, manifest):
             lines.append(' '.join(matches)+' 1°は記述上の目安であり、統計的な一致判定ではない。'+detail)
     if chosen('test3'):
         lines.extend(['', '## 試験3：障害物付近での速度調整', '',
-                      '障害物 (x,y,r)=(1.6,−0.45,0.10), (2.4,0.55,0.10) m。近傍速度はCSVと時系列図に保存。'])
-        common_table((('value', '調整条件'), ('method', '手法')), chosen('test3'))
+                      '障害物 (x,y,r)=(1.6,−0.45,0.10), (2.4,0.55,0.10) m。近傍平均速度は障害物表面までの距離が0.6 m未満の周期の適用並進速度の平均。ゴール接近時の調整は常に有効。',
+                      'RPPはDWPPと同じ前方注視点と曲率κ=2sinα/Lを用い、所望速度を(v,0,κv)、v=vx_max×speed_cap/box_speedとする。調整なしで0.22 m/s。障害物近接・ゴール接近の調整比は速度箱と共通で、曲率による速度調整は使わない。終端処理はDWPPと共通。',
+                      'RPPの指令計算に動的窓は使わず、適用前に共通の速度・加速度・速度調整の窓へ成分ごとにクリップする。表の制約違反率はRPPではクリップ前の所望速度（unconstrained_demand_violation_pct）、DWVPでは選択後の指令を評価する。適用速度の違反率は両手法とも0%。',
+                      '内訳は物理的な速度上限と、直前の適用速度からの加速度上限について数える。両方を超える周期は違反率では1回だけ数える。Nav2全体の性能比較は行っていない。'])
+        test3_rows = [{**r, **{f'reported_{k}': r[f"{'demand' if r['method']=='rpp' else 'command'}_{k}"]
+                               for k in ('velocity_violation_steps', 'acceleration_violation_steps', 'both_violation_steps')}}
+                      for r in chosen('test3')]
+        common_table((('value', '調整条件'), ('method', '手法')), test3_rows,
+                     (('mean_near_obstacle_speed_m_s', '近傍平均速度 [m/s]', 4),
+                      ('control_steps', '全周期数', 0),
+                      ('reported_velocity_violation_steps', '速度超過 [周期]', 0),
+                      ('reported_acceleration_violation_steps', '加速度超過 [周期]', 0),
+                      ('reported_both_violation_steps', '両方超過 [周期]', 0)))
+        lines.append('並進速度と走行距離の図は `test3/cost0_approach1_distance_speed` と `test3/cost1_approach1_distance_speed`（PDF/PNG）。')
     if chosen('test4'):
         lines.extend(['', '## 試験4：結果の頑健性', '',
-                      '(a)時間一致探索、(b)前方注視、(c)加速度、(d)速度調整、(e)観測ノイズ。表は区分・経路・手法ごとの条件平均（最大誤差列も各条件の最大値の平均）。',
-                      '全探索候補とタイムアウトを含む。走行時間だけは成功試行の平均。各水準はsummary.csv、ノイズの平均・標本SD・有効数はnoise_summary.csv。ゼロノイズ20 seedは同一軌跡。'])
+                      '(a)時間一致探索、(b)前方注視、(c)加速度、(e)観測ノイズ。表は区分・経路・手法ごとの条件平均（最大誤差列も各条件の最大値の平均）。'
+                      '全探索候補とタイムアウトを含む。走行時間は成功試行、整定時間は値が定義された試行の平均。各水準はsummary.csv、ノイズの平均・標本SD・有効数はnoise_summary.csv。ゼロノイズ20 seedは同一軌跡。'])
         grouped = aggregate(chosen('test4'), ('part', 'scenario', 'method'))
-        group_rows = [{**g, **{k: g[k+'_mean'] for k in (*COMMON_METRICS, 'crossing_m', 'transition_heading_lag_deg', 'post_transition_heading_overshoot_deg')},
+        group_rows = [{**g, **{k: g[k+'_mean'] for k in (*COMMON_METRICS, 'crossing_m', 'settling_2pct_time_s', 'transition_heading_lag_deg', 'post_transition_heading_overshoot_deg')},
                        'counts': f"{g['success_count']}/{g['n']}"} for g in grouped]
         common_table((('part', '区分'), ('scenario', '経路'), ('method', '手法'), ('counts', '成功/条件数')), group_rows, lateral+heading)
         for method, match in manifest.get('time_matches', {}).items():
@@ -132,9 +176,25 @@ def report(output, rows, manifest):
         lines.extend(['', '## 任意試験：前方注視×ノイズ', '',
                       '全条件の共通指標はsummary.csv、水準ごとの平均・標本SD・有効数はnominal_selection.csv。'])
         grouped = aggregate(chosen('preview-noise'), ('scenario', 'method'))
-        group_rows = [{**g, **{k: g[k+'_mean'] for k in (*COMMON_METRICS, 'crossing_m', 'transition_heading_lag_deg', 'post_transition_heading_overshoot_deg')}} for g in grouped]
+        group_rows = [{**g, **{k: g[k+'_mean'] for k in (*COMMON_METRICS, 'crossing_m', 'settling_2pct_time_s', 'transition_heading_lag_deg', 'post_transition_heading_overshoot_deg')}} for g in grouped]
         common_table((('scenario', '経路'), ('method', '手法')), group_rows, lateral+heading)
+    if chosen('regulation-sweep'):
+        lines.extend(['', '## 任意試験：速度調整パラメータ', ''])
+        common_table((('parameter', 'パラメータ'), ('value', '値'), ('method', '手法')), chosen('regulation-sweep'),
+                     (('mean_near_obstacle_speed_m_s', '近傍平均速度 [m/s]', 4),))
     lines.extend(['', '## 再集計と検証範囲', ''])
+    round2 = manifest.get('comment_round2')
+    followup = manifest.get('comment_round2_followup')
+    if followup:
+        lines.extend([f"上限0.33 mへの復帰：前回変更された {followup['restored_conditions']}/{followup['previously_changed_conditions']} 条件の全指標が元の値と一致した（絶対差1e−10以内）。既存 {followup['matched_conditions']} 条件も全指標一致。照合結果は `comment_round2_followup_conditions.csv` と `comment_round2_followup_restoration.csv`。",
+                      f"元の軌跡を {followup['reused_conditions']} 条件で再集計し、試験3の4条件を再計算した。SHA-256、保護ファイル、既存5手法の指令の照合は `comment_round2_followup.json`。前回の変更記録 `comment_round2_changes.csv` は保存した。"])
+        for item in followup['test3_breakdown']:
+            if item['method'] == 'rpp':
+                lines.append(f"RPP・{item['value']} の加速度超過：発進 {item['startup_acceleration_steps']}、追従中の調整比変化 {item['regulation_acceleration_steps']}、終端処理 {item['terminal_acceleration_steps']}、その他 {item['other_acceleration_steps']} 周期。")
+    elif round2:
+        lines.extend([f"著者コメント第2弾：既存 {round2['matched_conditions']} 条件を照合し、指標不変 {round2['unchanged_conditions']} 条件、変更 {round2['changed_conditions']} 条件（絶対差1e−10超）。追加 {round2['new_conditions']} 条件。全変更条件は `comment_round2_conditions.csv`、指標別の旧値・新値は `comment_round2_changes.csv`。",
+                      f"保存軌跡から再集計した条件は {round2['reused_conditions']} 件。試験3と、0.165 mの上限が有効になる条件・時間一致探索は再計算した。再利用した軌跡のSHA-256一致と旧軌跡の保存を `comment_round2.json` に記録。",
+                      '上限を下げても結果が変わらないという予想は成立しなかった。DWVPは車体x・y成分の速度箱で選ぶため並進速度が0.22 m/sを超え得る。長い前方注視時間、加速度制約、観測ノイズの条件でも旧上限との違いが生じた。'])
     refresh = manifest.get('metrics_alignment')
     if refresh:
         lines.extend([f"保存軌跡 {refresh['distinct_trajectories']} 件から再集計。軌跡ファイルのSHA-256、試行仕様、条件ID、制御器・試験設定は維持。既存指標の差分は `metrics_alignment_changes.csv`、検査結果は `metrics_alignment.json`。既存の最大誤差・走行時間・制約違反・位置行き過ぎ・姿勢行き過ぎに変化なし。",
@@ -150,7 +210,8 @@ def report(output, rows, manifest):
         lines.append('終了未成功: '+'、'.join(issue_counts)+'。条件・seed・終了状態は `issues.csv`。')
     if manifest.get('method_comparison'):
         lines.append('比較手法追加時の過去の照合記録はmanifest.jsonのmethod_comparisonとmethod_changes.csvに保持。今回の再集計とは別の履歴である。')
-    lines.append('図は従来の書体・寸法を維持。姿勢積分対加速度倍率を区間ごとに追加し、0.3 mの時系列は評価区間の終わりまで表示。実機試行は0件。')
+    lines.append('図は従来の書体・寸法を維持。実機試行は0件。')
+    lines = [line for i, line in enumerate(lines) if line or i == 0 or lines[i-1]]
     if len(lines) > 240:
         raise RuntimeError(f'REPORT.md would exceed 240 lines: {len(lines)}')
     (output/'REPORT.md').write_text('\n'.join(lines)+'\n')

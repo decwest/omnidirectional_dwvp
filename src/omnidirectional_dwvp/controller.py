@@ -104,7 +104,7 @@ class Command:
 
 
 def compute_command(pose, current, path, arc, method, config, obstacles=()):
-    if method not in {"vp", "vp_scaled", "vp_scaled_accel", "dwvp", "dwpp"}:
+    if method not in {"vp", "vp_scaled", "vp_scaled_accel", "dwvp", "dwpp", "rpp"}:
         raise ValueError(f"unknown controller: {method}")
     nearest = int(np.argmin(np.sum((path[:, :2] - pose[:2])**2, axis=1)))
     lookahead = config.fixed_lookahead
@@ -130,27 +130,34 @@ def compute_command(pose, current, path, arc, method, config, obstacles=()):
     cap, obstacle_distance = speed_cap(pose, path, arc, nearest, config, obstacles)
     lower, upper = dynamic_box(current, config)
     lower, upper = regulated_box(lower, upper, cap, config)
-    if method == "dwpp":
+    if method in ("dwpp", "rpp"):
         lower[0] = max(0.0, lower[0])
         lower[1] = upper[1] = 0.0
     goal_distance = float(np.linalg.norm(pose[:2] - path[-1, :2]))
     if goal_distance <= config.goal_xy or config.box_speed <= 1e-12:
-        goal_yaw = terminal_heading(path) if method == "dwpp" else path[-1, 2]
+        goal_yaw = terminal_heading(path) if method in ("dwpp", "rpp") else path[-1, 2]
         yaw_error = float(wrap(goal_yaw - pose[2]))
         target_w = 0.0 if abs(yaw_error) <= config.goal_yaw else math.copysign(
             min(abs(yaw_error) / config.min_orientation_time, math.sqrt(2 * config.aw * abs(yaw_error))), yaw_error)
         desired = np.array([0.0, 0.0, target_w])
         command = np.clip(desired, lower, upper)
         mode = "terminal"
-    elif method == "dwpp":
+    elif method in ("dwpp", "rpp"):
         delta = target[:2] - pose[:2]
         lateral = -math.sin(pose[2]) * delta[0] + math.cos(pose[2]) * delta[1]
         distance2 = float(delta @ delta)
         curvature = 2.0 * lateral / distance2 if distance2 > 0.001 else 0.0
-        v, w = optimal_velocity_in_window((upper[0], lower[0], upper[2], lower[2]), curvature)
-        desired = np.array([config.vx_max, 0.0, curvature * config.vx_max])
-        command = np.array([v, 0.0, w])
-        mode = "intersection" if abs(w - curvature * v) <= 1e-10 else "projection"
+        if method == "rpp":
+            # Cost/approach regulation only; the PP demand does not use a window.
+            speed = config.vx_max * cap / config.box_speed
+            desired = np.array([speed, 0.0, curvature * speed])
+            command = np.clip(desired, lower, upper)
+            mode = "clipping"
+        else:
+            v, w = optimal_velocity_in_window((upper[0], lower[0], upper[2], lower[2]), curvature)
+            desired = np.array([config.vx_max, 0.0, curvature * config.vx_max])
+            command = np.array([v, 0.0, w])
+            mode = "intersection" if abs(w - curvature * v) <= 1e-10 else "projection"
     elif method == "vp":
         command = np.clip(desired, lower, upper)
         mode = "clipping"

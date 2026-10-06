@@ -9,10 +9,10 @@ from matplotlib import font_manager
 from .access_metrics import aggregate
 
 COLORS = {'vp': '#2568a0', 'vp_scaled': '#b87510', 'vp_scaled_accel': '#7b52a1',
-          'dwvp': '#bf4145', 'dwpp': '#23845d'}
+          'dwvp': '#bf4145', 'dwpp': '#23845d', 'rpp': '#2568a0'}
 LABELS = {'vp': 'Clipped VP', 'vp_scaled': 'Scaled VP', 'vp_scaled_accel': 'Scaled VP (vel. and acc.)',
-          'dwvp': 'DWVP', 'dwpp': 'DWPP'}
-STYLES = {'vp': '--', 'vp_scaled': '-.', 'vp_scaled_accel': ':', 'dwvp': '-', 'dwpp': (0, (5, 1, 1, 1))}
+          'dwvp': 'DWVP', 'dwpp': 'DWPP', 'rpp': 'RPP'}
+STYLES = {'vp': '--', 'vp_scaled': '-.', 'vp_scaled_accel': ':', 'dwvp': '-', 'dwpp': (0, (5, 1, 1, 1)), 'rpp': '--'}
 HEADING_METHODS = ('vp', 'vp_scaled', 'vp_scaled_accel', 'dwvp')
 
 
@@ -35,7 +35,8 @@ def save(fig, stem):
 def panel(stem, curves, xlabel, ylabel, reference=None, vertical=None):
     fig, ax = plt.subplots(figsize=(3.35, 2.15))
     for method, x, y in curves:
-        ax.plot(x, y, color=COLORS[method], ls=STYLES[method], lw=1.)
+        # Put dashed RPP above DWVP so identical trajectories show both colors.
+        ax.plot(x, y, color=COLORS[method], ls=STYLES[method], lw=1., zorder=3 if method=='rpp' else 2)
     if reference is not None:
         ax.axhline(reference, color='0.35', ls=':', lw=.7)
     if vertical is not None:
@@ -72,7 +73,7 @@ def figures(output, rows, settings, config):
             continue
         out = output/test
         legend(out/'legend', ('dwpp', 'vp', 'vp_scaled', 'dwvp') if test=='test1'
-               else HEADING_METHODS if test=='test2' else ('vp', 'vp_scaled', 'dwvp'))
+               else HEADING_METHODS if test=='test2' else ('rpp', 'dwvp'))
         groups = {}
         for row in chosen:
             key = row['value'] if test=='test3' else row['scenario']
@@ -185,10 +186,10 @@ def figures(output, rows, settings, config):
                     curves.append((method, x, y))
                 panel(out/(stem+'_'+quantity), curves, 'Time [s]', label,
                       reference=0. if quantity=='signed_heading' else 90. if quantity=='heading' else None)
-    chosen = [r for r in rows if r['test']=='test4']
+    chosen = [r for r in rows if r['test'] in ('test4', 'regulation-sweep')]
     if not chosen:
         return
-    out = output/'test4'
+    out = output/chosen[0]['test']
     legend(out/'legend', ('dwpp', 'vp', 'vp_scaled', 'dwvp'))
     # Per-scenario, per-parameter panels preserve distinct units and sweep axes.
     sweep_groups = {}
@@ -210,6 +211,8 @@ def figures(output, rows, settings, config):
                 curves.append((method, [r['value'] for r in series], [r[metric] for r in series]))
         panel(out/(scene+'_'+parameter), curves, xlabels[parameter], ylabel)
     noise = aggregate([r for r in chosen if r['part']=='e'], ('scenario', 'method', 'noise_xy_m'))
+    if not noise:
+        return
     for scene in ('offset', 'gradual', 'rapid'):
         metric, label = ('crossing_m', 'Crossing [m]') if scene=='offset' else ('eval_max_heading_error_deg', 'Max. heading error [deg]')
         fig, ax = plt.subplots(figsize=(3.35, 2.15))

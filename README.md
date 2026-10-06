@@ -92,13 +92,15 @@ available, defaulting to `results/legacy/`. Saved `results/paper/` is preserved.
 |---|---|---|
 | `test1` | 16 conditions: four initial lateral offsets; DWPP, Clipped VP, Scaled VP, DWVP | `test1/` |
 | `test2` | 176 conditions: nine nominal heading ramps, one step, and acceleration sweeps; Clipped VP, Scaled VP, Scaled VP (vel. and acc.), DWVP | `test2/` |
-| `test3` | 6 conditions: obstacle proximity regulation on/off; Clipped VP, Scaled VP, DWVP; goal approach regulation always enabled | `test3/` |
-| `test4` | (a) Each VP baseline matched to DWVP travel time, (b) preview (110), (c) acceleration (100), (d) RPP parameters (36), (e) localization noise (1000) | `test4/` |
+| `test3` | 4 conditions: obstacle proximity regulation on/off; RPP and DWVP; goal approach regulation always enabled | `test3/` |
+| `test4` | (a) Each VP baseline matched to DWVP travel time, (b) preview (110), (c) acceleration (100), (e) localization noise (1000) | `test4/` |
+| `regulation-sweep` | Optional cost-distance, cost-gain and approach-distance sweep (36); Clipped VP, Scaled VP, DWVP | `regulation-sweep/` |
 | `preview-noise` | Optional full preview × noise grid, three representative paths | `preview-noise/` |
-| `all` | Four studies, every time-match candidate and all 20 noise seeds; excludes `preview-noise` | `test1/`–`test4/` |
+| `all` | Four studies, every time-match candidate and all 20 noise seeds; excludes both optional grids | `test1/`–`test4/` |
 
 `configs/access_v2.yaml` contains controller settings and the complete study grid.
-The nominal profile uses 0.22 m/s VP demand and adaptive preview time 0.75 s.
+The default profile uses 0.22 m/s VP demand and adaptive preview time 0.75 s,
+bounded between 0.11 and 0.33 m. Fixed-distance sweeps override these bounds.
 All VP variants and DWVP use the same demand and reachable box; DWVP can select a ray scale
 above one. It always selects the largest alpha at ray/box intersections and
 breaks equal-distance nonintersection ties toward larger alpha. Goal slowdown
@@ -108,6 +110,20 @@ compared with zero at 0.6 m. These are simulation observations.
 DWPP is a forward differential-drive reference with `(v, 0, omega)`,
 ignores supplied path yaw, and uses the final positional tangent for terminal
 rotation. Its transplanted command selector is validated against upstream outputs.
+RPP uses the same lookahead point, PP curvature and terminal handling as DWPP.
+Its demand is `(v, 0, curvature * v)`, where
+`v = vx_max * speed_cap / box_speed`: 0.22 m/s without regulation, reduced by
+the same cost/approach ratio used by the velocity box. It uses no curvature
+regulation and selects no dynamic-window optimum;
+the demand is clipped component by component to the shared reachable regulated
+box before application.
+Test3 reports RPP's pre-clip `unconstrained_demand_violation_pct` and DWVP's
+selected-command `command_constraint_violation_pct`; the applied-command column
+remains separate and is zero for both methods. The `demand_*_violation_steps`
+and `command_*_violation_steps` columns split physical velocity and acceleration
+exceedances, their overlap, and their union. The demand counts use the same
+1e-10 velocity tolerance as `unconstrained_demand_violation_pct`, relative to
+the previous applied velocity. Regulated-cap excess is a separate quantity.
 
 `vp` (Clipped VP) retains component-wise clipping of the original VP demand.
 `vp_scaled` (Scaled VP) first scales that demand by the largest common factor
@@ -163,7 +179,8 @@ within that evaluation window; it is missing if the ramp is not passed.
 `transition_heading_lag_deg` restricts lag to the changing-reference interval;
 for a zero-length step it uses the first outgoing sample. The existing
 `eval_max_heading_lag_deg` remains the maximum over the whole evaluation window.
-Test1 and the offset cases in test4 report `crossing_m` as position overshoot;
+Test1 and the offset cases in test4 report `crossing_m` as position overshoot
+and `settling_2pct_time_s` as settling time;
 test2 and the ramp cases in test4 report heading lag and post-transition overshoot.
 `acceleration_time_vx_s`, `acceleration_time_vy_s`, and `acceleration_time_w_s`
 are the maximum absolute physical axis velocity limits divided by their
@@ -204,7 +221,8 @@ violating conditions.
 `REPORT.md` is a generated factual handoff of at most 240 lines, with common
 metric columns across tests. Test4's compact table averages per-condition
 metrics; individual conditions and noise standard deviations remain in CSV.
-Settling metrics remain in CSV only. An optional
+Settling time is also shown in the test1 and test4 tables; undefined values
+remain missing when averaging conditions. An optional
 `--baseline /path/to/previous/manifest.json` matches trajectory specifications
 across test renumbering and writes `method_changes.csv` and a manifest audit.
 If old `trials/` are present, it also compares mean position error
@@ -215,7 +233,42 @@ The snapshot taken before adding the scaled baselines is retained locally at
 `build/scaled-vp-task/prechange/manifest.json`; pass that path to `--baseline`
 to reproduce the before/after comparison in the saved report.
 
-To refresh metrics from the existing trajectories, without rerunning simulations:
+The initial round-2 refresh reduced the preview cap from 0.33 to 0.165 m and
+changed 962 conditions. The follow-up restores 0.33 m and corrects RPP's demand
+to the regulated x-axis limit. `comment_round2_changes.csv` and the accompanying
+`comment_round2.json`/`comment_round2_conditions.csv` retain the earlier audit.
+The current audit is `comment_round2_followup.json`; its `_conditions.csv` checks
+all matching original conditions and its `_restoration.csv` checks every metric
+in the earlier change list against the original value (absolute tolerance 1e-10).
+Both generations of trajectories remain intact. The old optional sweep values
+remain in `regulation_sweep_previous.csv`; its old figures remain in `test4/`.
+`lookahead_ranges.csv` reports full-run minima/maxima per test, separating adaptive
+and fixed distances. Upper-active counts mean the uncapped adaptive distance
+exceeded the bound by more than 1e-10; at-upper counts also include equality.
+Counts sum all condition entries, including repeated nominal settings and seeds.
+
+The local pre-round-2 snapshot is under the ignored
+`results/access_v2/trials/comment_round2_baseline/`. To repeat this refresh using
+that snapshot and the original trajectories in the same output tree (the local
+follow-up entry-state snapshot is `build/comment_round2_followup/`):
+
+```bash
+uv run --offline --locked --python 3.11.11 dwvp-study all --config configs/access_v2.yaml --output results/access_v2 --seed 0 --workers 8 --reuse-round2-baseline results/access_v2/trials/comment_round2_baseline/manifest.json
+uv run --offline --locked --python 3.11.11 python tools/compare_access_round2_followup.py results/access_v2 --baseline results/access_v2/trials/comment_round2_baseline/manifest.json --snapshot build/comment_round2_followup
+uv run --offline --locked --python 3.11.11 python tools/validate_access_v2.py results/access_v2
+```
+
+Reuse requires unchanged simulation inputs, allowing an equal cap or a tighter,
+inactive cap. The restored profile reuses the original 0.33 m-cap histories.
+Saved trajectories are copied without changing their bytes,
+their metrics are re-evaluated, and their origin is recorded in trial metadata.
+Test3 and active-cap conditions are simulated. Cache hits avoid repeating
+completed work. The snapshot and per-trial histories are local artifacts.
+Run `regulation-sweep` with a separate `--output` directory to produce its own
+manifest and report; it is never included in `all`.
+
+The earlier, one-time mean/lag metric alignment used this command with its
+pre-alignment snapshot (it is not the round-2 migration command):
 
 ```bash
 # Use the repository-local cache variables shown above.
@@ -239,13 +292,14 @@ The final-yaw crossing occurs later, after braking, and is not the sampling even
 The prediction assumes constant T and maximum angular deceleration; the report
 shows mismatches as well as matches. It is not a DWVP guarantee.
 
-At alignment start, the purported all-zero overshoot column was already nonzero
+At the earlier alignment start, the purported all-zero overshoot column was already nonzero
 in 535 conditions and matched direct trajectory calculations. The old report
 omitted this column. The current files cannot establish the cause in an earlier
-all-zero version; regression tests cover the supplied 0.3 m reference values.
+all-zero version; regression tests retain the supplied 0.3 m reference values
+with their original 0.33 m cap.
 
 Validate a completed run with `uv run --offline --locked --python 3.11.11 python tools/validate_access_v2.py results/access_v2`;
-use `--study preview-noise` for the optional grid. Use the existing locked environment.
+use `--study preview-noise` or `--study regulation-sweep` for an optional grid. Use the existing locked environment.
 The saved results of this configuration are in `results/access_v2/`.
 
 Figures require installed Times New Roman, use STIX math and PDF font type 42,

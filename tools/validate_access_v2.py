@@ -18,7 +18,7 @@ from omnidirectional_dwvp.studies import code_hash, sha
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output',type=Path)
-    parser.add_argument('--study', default='all', choices=('all','test1','test2','test3','test4','preview-noise'))
+    parser.add_argument('--study', default='all', choices=('all','test1','test2','test3','test4','preview-noise','regulation-sweep'))
     args=parser.parse_args()
     start=perf_counter()
     root=args.output
@@ -32,6 +32,20 @@ def main():
         alignment=json.loads((root/'metrics_alignment.json').read_text())
         assert alignment['source_sha256']==manifest['source_sha256']
         assert alignment['unexpected_existing_metric_changes']==0
+    round2 = None
+    audit_name = ('comment_round2_followup' if 'comment_round2_followup' in manifest else 'comment_round2')
+    if audit_name in manifest:
+        round2=json.loads((root/f'{audit_name}.json').read_text())
+        assert round2['source_sha256']==manifest['source_sha256']
+        for identity, expected_hash in round2['original_trajectory_sha256'].items():
+            assert hashlib.sha256((root/'trials'/identity/'trajectory.npz').read_bytes()).hexdigest()==expected_hash
+        if audit_name=='comment_round2_followup':
+            assert round2['restored_conditions']==round2['previously_changed_conditions']==962
+            assert round2['changed_conditions']==0 and round2['new_conditions']==2
+            with (root/'comment_round2_followup_restoration.csv').open() as stream:
+                restored=list(csv.DictReader(stream))
+            assert len({r['previous_condition_id'] for r in restored})==962
+            assert all(r['restored']=='True' for r in restored)
     planned=Counter(sha(c) for c in manifest['planned_conditions'])
     saved=Counter(t['condition_id'] for t in manifest['trials'])
     assert planned==saved
@@ -46,6 +60,7 @@ def main():
         assert Counter(r['condition_id'] for r in data)==Counter(t['condition_id'] for t in manifest['trials'] if t['condition']['test']==test)
         rows.extend(data)
     assert not any(r['part']=='f' for r in rows)
+    assert (any(r['part']=='d' for r in rows)) == (args.study=='regulation-sweep')
     assert (any(r['part']=='g' for r in rows)) == (args.study=='preview-noise')
     noise=[r for r in rows if r['part'] in ('e','g')]
     groups={}
@@ -61,9 +76,10 @@ def main():
         assert len([r for r in rows if r['test']=='test2' and r['part']=='step'])==4
         assert len([r for r in rows if r['test']=='test2' and r['part']=='acceleration'])==136
     if 'test3' in selected:
-        assert len([r for r in rows if r['test']=='test3'])==6
+        assert len([r for r in rows if r['test']=='test3'])==4
+        assert {r['method'] for r in rows if r['test']=='test3'}=={'rpp','dwvp'}
     if 'test4' in selected:
-        assert {p:sum(r['test']=='test4' and r['part']==p for r in rows) for p in 'bcde'}==dict(b=110,c=100,d=36,e=1000)
+        assert {p:sum(r['test']=='test4' and r['part']==p for r in rows) for p in 'bcde'}==dict(b=110,c=100,d=0,e=1000)
         assert set(manifest['time_matches'])=={'vp','vp_scaled'}
         for method, match in manifest['time_matches'].items():
             assert match['bracketed'] and match['matched']
@@ -71,6 +87,8 @@ def main():
             assert best['method']==method and best['success']
             assert abs(best['travel_time_s']-match['target_time_s'])<=manifest['settings']['match_tolerance_s']+1e-10
     assert all(t['condition']['config']['approach_distance']>0 for t in manifest['trials'])
+    if args.study=='regulation-sweep':
+        assert len(rows)==36
     checked=set()
     max_velocity_excess=max_acceleration_excess=max_dynamic_window_excess=0.
     for trial in manifest['trials']:
@@ -86,6 +104,15 @@ def main():
         metadata=json.loads((root/'trials'/identity/'trial.json').read_text())
         assert sha(metadata['spec'])==identity
         assert metadata['spec']==trial['spec']
+        assert trial['condition']['config']==trial['spec']['config']
+        assert trial['spec']['numerical_source_sha256']==manifest['numerical_source_sha256'] or alignment
+        reuse=metadata.get('trajectory_reuse')
+        if reuse:
+            trajectory_hash=hashlib.sha256((root/'trials'/identity/'trajectory.npz').read_bytes()).hexdigest()
+            assert trajectory_hash==reuse['trajectory_sha256']
+            assert hashlib.sha256((root/'trials'/reuse['trial_id']/'trajectory.npz').read_bytes()).hexdigest()==trajectory_hash
+            if round2:
+                assert round2['reused_trajectories_provenance'][identity]==reuse
         for metric in COMMON_METRICS:
             assert metadata['metrics'][metric]==row[metric]
         if alignment:
@@ -142,6 +169,15 @@ def main():
             upper=np.array([cfg['vx_max'],cfg['vy_max'],cfg['w_max']])
             accel=np.array([cfg['ax'],cfg['ay'],cfg['aw']])
             previous=np.vstack((np.zeros(3),applied[:-1]))
+            preview=(np.full(len(commands),cfg['fixed_lookahead']) if cfg['fixed_lookahead'] is not None else
+                     np.clip(cfg['lookahead_time']*np.linalg.norm(previous[:,:2],axis=1),cfg['lookahead_min'],cfg['lookahead_max']))
+            np.testing.assert_allclose(a['lookahead'],preview,atol=1e-14,rtol=0)
+            assert row['control_steps']==len(commands)
+            assert row['lookahead_min_m']==float(preview.min())
+            assert row['lookahead_max_m']==float(preview.max())
+            raw=cfg['lookahead_time']*np.linalg.norm(previous[:,:2],axis=1)
+            assert row['lookahead_upper_active_steps']==(int(np.sum(raw>cfg['lookahead_max']+1e-10)) if cfg['fixed_lookahead'] is None else 0)
+            assert row['lookahead_at_upper_steps']==(int(np.sum(preview>=cfg['lookahead_max']-1e-10)) if cfg['fixed_lookahead'] is None else 0)
             dv=np.maximum(np.maximum(lower-commands,commands-upper),0.)
             da=np.maximum(abs((commands-previous)*cfg['frequency'])-accel,0.)
             max_velocity_excess=max(max_velocity_excess,float(dv.max()))
@@ -155,8 +191,25 @@ def main():
             assert int(np.any(da>1e-10,axis=1).sum())==round(row['acceleration_violation_duration_s']*cfg['frequency'])
             violations=np.any(dv>1e-10,axis=1)|np.any(da>1e-10,axis=1)
             np.testing.assert_allclose(row['command_constraint_violation_pct'],100*violations.mean())
-            if metadata['spec']['method']=='dwpp':
+            lo=np.maximum(previous-accel/cfg['frequency'],lower)
+            hi=np.minimum(previous+accel/cfg['frequency'],upper)
+            demand_violations=np.any(a['demands']<lo-1e-10,axis=1)|np.any(a['demands']>hi+1e-10,axis=1)
+            np.testing.assert_allclose(row['unconstrained_demand_violation_pct'],100*demand_violations.mean())
+            for label, velocities in (('demand',a['demands']),('command',commands)):
+                v=np.any((velocities<lower-1e-10)|(velocities>upper+1e-10),axis=1)
+                acc=np.any((velocities<previous-accel/cfg['frequency']-1e-10)|
+                           (velocities>previous+accel/cfg['frequency']+1e-10),axis=1)
+                for key, values in (('velocity_violation_steps',v),('acceleration_violation_steps',acc),
+                                    ('both_violation_steps',v&acc),('violation_steps',v|acc)):
+                    assert row[f'{label}_{key}']==int(values.sum())
+            if metadata['spec']['method'] in ('dwpp','rpp'):
                 assert np.all(commands[:,0]>=-1e-10) and np.all(commands[:,1]==0)
+            if metadata['spec']['method']=='rpp':
+                np.testing.assert_array_equal(commands,np.clip(a['demands'],a['boxes'][:,0],a['boxes'][:,1]))
+                tracking=a['modes']!=3
+                box_speed=np.hypot(max(abs(cfg['vx_min']),abs(cfg['vx_max'])),
+                                   max(abs(cfg['vy_min']),abs(cfg['vy_max'])))
+                np.testing.assert_allclose(a['demands'][tracking,0],cfg['vx_max']*a['speed_caps'][tracking]/box_speed,rtol=0,atol=1e-14)
     assert max_velocity_excess<=1e-10 and max_acceleration_excess<=1e-10 and max_dynamic_window_excess<=1e-10
     assert not any(r['status']=='error' for r in rows)
     report_lines=len((root/'REPORT.md').read_text().splitlines())
@@ -194,19 +247,29 @@ def main():
                 assert i>0 and history['applied'][i,2]<history['applied'][i-1,2]-1e-10
                 np.testing.assert_allclose(omega,history['applied'][i-1,2])
                 np.testing.assert_allclose(time,max(cfg.min_orientation_time,cfg.orientation_time_weight*history['lookahead'][i]/cfg.translation_speed))
-        # Independently supplied nonzero values prevent an all-zero column from
-        # passing simply because the same buggy expression was used twice.
-        references={.25:(43.0,52.1,8.8),.5:(8.5,16.6,3.7),1.:(0.,0.,0.)}
-        for scale,values in references.items():
-            for method,value in zip(('vp','vp_scaled','dwvp'),values):
-                row=next(r for r in rows if r['test']=='test2' and r['parameter']=='acceleration_scale' and float(r['transition_length_m'])==.3 and float(r['value'])==scale and r['method']==method)
-                assert abs(float(row['post_transition_heading_overshoot_deg'])-value)<.051
+        # Historical 0.33 m-cap values remain covered by controller regression
+        # tests. Audit the current cap's overshoot directly from its trajectory.
     report=(root/'REPORT.md').read_text()
     assert '横ずれ' not in report and '速度上限超過' not in report and '[mm]' not in report
     table_headers=[line for line in report.splitlines() if line.startswith('|') and '最大位置 [m]' in line]
     assert len(table_headers)>=len(selected)
     assert all(all(label in line for label in ('平均位置 [m]','位置積分 [m·s]','最大姿勢 [°]','平均姿勢 [°]','姿勢積分 [°·s]','走行時間 [s]')) for line in table_headers)
     assert not any('2%' in line or '最大姿勢変化' in line for line in report.splitlines() if line.startswith('|'))
+    if 'test1' in selected:
+        section=report.split('## 試験1：')[1].split('## ')[0]
+        assert '整定時間 [s]' in section
+    if 'test4' in selected:
+        section=report.split('## 試験4：')[1].split('## ')[0]
+        assert '整定時間 [s]' in section and '(d)' not in section
+    if 'test3' in selected:
+        section=report.split('## 試験3：')[1].split('## ')[0]
+        assert '近傍平均速度 [m/s]' in section and '指令制約違反 [%]' in section
+        assert 'unconstrained_demand_violation_pct' in section
+        assert '速度超過 [周期]' in section and '加速度超過 [周期]' in section
+        for row in (t['summary'] for t in manifest['trials'] if t['condition']['test']=='test3'):
+            line=next(line for line in section.splitlines() if line.startswith(f"| {row['value']} | {row['method']} |"))
+            expected=row['unconstrained_demand_violation_pct'] if row['method']=='rpp' else row['command_constraint_violation_pct']
+            assert line.endswith(f"| {expected:.3f} |")
     assert not any('cap' in p.stem for p in pdfs)
     assert [p.with_suffix('') for p in pdfs]==[p.with_suffix('') for p in pngs]
     fonts=set()
