@@ -1,0 +1,2 @@
+test,minimum_m,maximum_m,adaptive_minimum_m,adaptive_maximum_m,fixed_minimum_m,fixed_maximum_m,upper_active_steps,at_upper_steps,adaptive_steps
+acceleration-sweep,0.11,0.2332790107551015,0.11,0.2332790107551015,,,0,0,81768

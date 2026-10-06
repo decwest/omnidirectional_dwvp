@@ -117,7 +117,7 @@ def test_noise_and_selection_grid_keep_all_twenty_seeds():
     assert not any(c['part'] in ('d','f','g') for c in conditions)
     optional,_=plan_conditions(Config(**profile),settings,0,('preview-noise',))
     g=[c for c in optional if c['part']=='g']
-    e=[c for c in conditions if c['part']=='e']
+    e=[c for c in conditions if c['test']=='test4' and c['part']=='c']
     assert len(g)==11*5*3*20 and len(e)==10*5*20
     assert set(c['seed'] for c in g)==set(range(20))
     assert len([c for c in conditions if c['test']=='test1'])==16
@@ -126,10 +126,15 @@ def test_noise_and_selection_grid_keep_all_twenty_seeds():
     assert {c['method'] for c in conditions if c['test']=='test3'}=={'rpp','dwvp'}
     assert all(c['config']['approach_distance']>0 for c in conditions)
     assert len([c for c in conditions if c['test']=='test2' and c['part']=='step'])==4
-    assert set(c['part'] for c in conditions if c['test']=='test4')==set('bce')
-    assert len(conditions)==1406
+    assert set(c['part'] for c in conditions if c['test']=='test4')==set('bc')
+    assert not any(c['test']=='test4' and 'acceleration' in c['parameter'] for c in conditions)
+    assert len(conditions)==1306
     optional,_=plan_conditions(Config(**profile),settings,0,('regulation-sweep',))
     assert len(optional)==36 and {c['part'] for c in optional}=={'d'}
+    optional,_=plan_conditions(Config(**profile),settings,0,('acceleration-sweep',))
+    assert len(optional)==100 and {c['test'] for c in optional}=={'acceleration-sweep'}
+    assert {c['parameter'] for c in optional}=={'acceleration_scale','angular_acceleration_scale'}
+    assert {c['scenario']['name'] for c in optional}=={'offset','gradual','rapid'}
     sweep=[c for c in conditions if c['test']=='test2' and c['part']=='acceleration']
     assert len(sweep)==136
     assert {c['method'] for c in sweep}=={'vp','vp_scaled','vp_scaled_accel','dwvp'}
@@ -152,6 +157,57 @@ def test_aggregate_retains_timeout_metrics_and_missing_counts():
     assert result['crossing_m_mean']==pytest.approx(.2)
     assert result['crossing_m_n']==2
     assert result['crossing_m_std']==pytest.approx(np.std([.1,.3],ddof=1))
+
+
+def test_heading_grid_plots_ratio_boundary_three_methods_and_post_ramp_times(tmp_path, monkeypatch):
+    from omnidirectional_dwvp import access_plotting as plotting
+    profile=yaml.safe_load((ROOT/'configs/access_v2.yaml').read_text())
+    settings=profile.pop('study')
+    rows=[]
+    for ell in settings['acceleration_transition_lengths']:
+        for scale in settings['acceleration_scales']:
+            for method in ('vp','vp_scaled','vp_scaled_accel','dwvp'):
+                rows.append(dict(test='test2',part='acceleration',status='success',method=method,
+                                 parameter='acceleration_scale',value=scale,transition_length_m=ell,
+                                 acceleration_time_w_s=1/scale,lookahead_time_s=.75,trial_id=method,
+                                 post_transition_heading_overshoot_deg=scale,
+                                 eval_heading_error_integral_deg_s=10*scale,eval_max_heading_error_deg=2*scale))
+    for method in ('vp','vp_scaled','dwvp'):
+        directory=tmp_path/'trials'/method
+        directory.mkdir(parents=True)
+        np.savez(directory/'trajectory.npz',times=[0.,2.,4.,6.],
+                 poses=[[0.,0.,0.],[1.2,0.,0.],[2.,0.,0.],[3.3,0.,0.]],
+                 applied=[[.1,0.,.2],[.1,0.,-.2],[.1,0.,0.]],signed_yaw_errors=[0.,-.1,.2,0.])
+    captured={}
+    def capture(fig, stem):
+        captured[stem.name]=fig
+        plotting.plt.close(fig)
+    monkeypatch.setattr(plotting,'save',capture)
+    plotting.figures(tmp_path,rows,settings,Config(**profile))
+    grids={name:fig for name,fig in captured.items() if name.startswith('acceleration_ratio_ramp_')}
+    assert len(grids)==15
+    for fig in grids.values():
+        ax=fig.axes[0]
+        assert ax.get_xscale()=='log' and ax.get_title()=='' and ax.get_legend() is None
+        assert len(ax.lines)==4
+        for line,method in zip(ax.lines[:3],('vp','vp_scaled','dwvp')):
+            assert line.get_color()==plotting.COLORS[method]
+            np.testing.assert_allclose(line.get_xdata(),[2/3,8/9,4/3,16/9,8/3,16/3])
+        np.testing.assert_allclose(ax.lines[-1].get_xdata(),[2.,2.])
+        assert ax.lines[-1].get_linestyle()==':'
+    np.testing.assert_allclose(captured['acceleration_ratio_ramp_0p3_heading_integral'].axes[0].lines[0].get_ydata(),
+                               [20.,15.,10.,7.5,5.,2.5])
+    for scale in ('0p25','1'):
+        for quantity in ('speed','yaw','signed_heading'):
+            ax=captured[f'ramp_0p3_acceleration_{scale}_{quantity}'].axes[0]
+            for line in ax.lines[:3]:
+                # The last included pose is x=2 m, beyond the ramp end x=1.3 m.
+                np.testing.assert_allclose(line.get_xdata(),[0.,2.,4.])
+            if quantity=='signed_heading':
+                np.testing.assert_allclose(ax.lines[0].get_ydata(),np.rad2deg([0.,-.1,.2]))
+    labels=[text.get_text() for text in captured['acceleration_ratio_legend'].legends[0].get_texts()]
+    assert labels[:3]==['Clipped VP','Scaled VP','DWVP'] and len(labels)==4
+    assert plotting.plt.rcParams['pdf.fonttype']==42 and plotting.plt.rcParams['mathtext.fontset']=='stix'
 
 
 def test_failed_trial_saved_and_cache_identity_includes_initial_pose(tmp_path,monkeypatch):

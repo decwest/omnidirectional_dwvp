@@ -1,5 +1,5 @@
 test,minimum_m,maximum_m,adaptive_minimum_m,adaptive_maximum_m,fixed_minimum_m,fixed_maximum_m,upper_active_steps,at_upper_steps,adaptive_steps
-test4,0.055,0.44,0.11,0.33,0.055,0.44,1110,4414,1167519
+test4,0.055,0.44,0.11,0.33,0.055,0.44,1110,4414,1085751
 test1,0.11,0.17042204101293393,0.11,0.17042204101293393,,,0,0,12458
 test2,0.11,0.23251142924828389,0.11,0.23251142924828389,,,0,0,130238
 test3,0.11,0.165,0.11,0.165,,,0,0,2952

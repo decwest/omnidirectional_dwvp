@@ -32,7 +32,7 @@ def save(fig, stem):
     plt.close(fig)
 
 
-def panel(stem, curves, xlabel, ylabel, reference=None, vertical=None):
+def panel(stem, curves, xlabel, ylabel, reference=None, vertical=None, xscale='linear', xticks=None):
     fig, ax = plt.subplots(figsize=(3.35, 2.15))
     for method, x, y in curves:
         # Put dashed RPP above DWVP so identical trajectories show both colors.
@@ -41,15 +41,21 @@ def panel(stem, curves, xlabel, ylabel, reference=None, vertical=None):
         ax.axhline(reference, color='0.35', ls=':', lw=.7)
     if vertical is not None:
         ax.axvline(vertical, color='0.35', ls=':', lw=.7)
-    ax.set(xlabel=xlabel, ylabel=ylabel)
+    ax.set(xlabel=xlabel, ylabel=ylabel, xscale=xscale)
+    if xticks is not None:
+        ax.set_xticks(xticks, labels=[f'{x:.2f}' for x in xticks])
+        ax.minorticks_off()
     ax.grid(alpha=.2, lw=.4)
     save(fig, stem)
 
 
-def legend(stem, methods):
-    fig = plt.figure(figsize=(5.4 if 'vp_scaled_accel' in methods else 3.7, .3))
+def legend(stem, methods, ratio_boundary=False):
+    fig = plt.figure(figsize=(5.4 if 'vp_scaled_accel' in methods or ratio_boundary else 3.7, .3))
     handles = [Line2D([], [], color=COLORS[m], ls=STYLES[m], lw=1., label=LABELS[m]) for m in methods]
-    fig.legend(handles=handles, loc='center', ncol=len(methods), frameon=False, borderaxespad=0)
+    if ratio_boundary:
+        handles.append(Line2D([], [], color='0.35', ls=':', lw=.7,
+                              label=r'$\omega_{\max}/(a_\omega T)=2$'))
+    fig.legend(handles=handles, loc='center', ncol=len(handles), frameon=False, borderaxespad=0)
     save(fig, stem)
 
 
@@ -147,23 +153,26 @@ def figures(output, rows, settings, config):
     acceleration = [r for r in rows if r['test']=='test2' and r['part']=='acceleration' and r['status']!='error']
     if acceleration:
         out = output/'test2'
-        for parameter, ell in dict.fromkeys((r['parameter'], r['transition_length_m']) for r in acceleration):
-            group = [r for r in acceleration if r['parameter']==parameter and r['transition_length_m']==ell]
-            stem = f'{parameter}_ramp_{ell:g}'.replace('.', 'p')
-            for metric, suffix, label in (('eval_max_heading_error_deg', 'heading', 'Max. heading error [deg]'),
-                                          ('eval_heading_error_integral_deg_s', 'heading_integral', 'Heading error integral [deg s]'),
-                                          ('eval_max_position_error_m', 'position', 'Max. position error [m]')):
-                curves = []
-                for method in HEADING_METHODS:
-                    series = sorted([r for r in group if r['method']==method], key=lambda r:r['value'])
-                    curves.append((method, [r['value'] for r in series], [r[metric] for r in series]))
-                panel(out/(stem+'_'+suffix), curves,
-                      'Acceleration multiplier' if parameter=='acceleration_scale' else 'Yaw acceleration multiplier', label)
         methods = ('vp', 'vp_scaled', 'dwvp')
+        legend(out/'acceleration_ratio_legend', methods, ratio_boundary=True)
+        for ell in settings['acceleration_transition_lengths']:
+            group = [r for r in acceleration if r['parameter']=='acceleration_scale'
+                     and r['transition_length_m']==ell and r['method'] in methods]
+            if not group:
+                continue
+            ratio = lambda r: r['acceleration_time_w_s']/r['lookahead_time_s']
+            stem = f'acceleration_ratio_ramp_{ell:g}'.replace('.', 'p')
+            for metric, suffix, label in (('post_transition_heading_overshoot_deg', 'overshoot', 'Heading overshoot [deg]'),
+                                          ('eval_heading_error_integral_deg_s', 'heading_integral', 'Heading error integral [deg s]'),
+                                          ('eval_max_heading_error_deg', 'heading', 'Max. heading error [deg]')):
+                curves = []
+                for method in methods:
+                    series = sorted([r for r in group if r['method']==method], key=ratio)
+                    curves.append((method, [ratio(r) for r in series], [r[metric] for r in series]))
+                panel(out/(stem+'_'+suffix), curves, r'$\omega_{\max}/(a_\omega T)$', label,
+                      vertical=2., xscale='log', xticks=sorted({ratio(r) for r in group}))
         legend(out/'acceleration_time_series_legend', methods)
-        # Include the lowest acceleration, where the post-ramp overshoot is
-        # largest, without changing the simulation condition grid.
-        for scale in sorted(set(settings['acceleration_time_series_scales']) | {min(settings['acceleration_scales'])}):
+        for scale in (.25, 1.):
             group = [r for r in acceleration if r['parameter']=='acceleration_scale' and r['value']==scale
                      and r['transition_length_m']==settings['representative_rapid'] and r['method'] in methods]
             data = []
@@ -172,21 +181,21 @@ def figures(output, rows, settings, config):
                     data.append((row['method'], {k:a[k] for k in a}))
             stem = f"ramp_{settings['representative_rapid']:g}_acceleration_{scale:g}".replace('.', 'p')
             for quantity, label in (('speed', 'Translation speed [m/s]'), ('yaw', 'Yaw rate [rad/s]'),
-                                    ('signed_heading', 'Signed heading error [deg]'), ('heading', 'Heading [deg]')):
+                                    ('signed_heading', 'Signed heading error [deg]')):
                 curves = []
                 for method, a in data:
-                    if quantity in ('signed_heading', 'heading'):
+                    if quantity=='signed_heading':
                         mask = a['poses'][:, 0] <= settings['evaluation_end']
                         x = a['times'][mask]
-                        y = np.rad2deg(a['signed_yaw_errors'][mask] if quantity=='signed_heading' else a['poses'][mask, 2])
+                        y = np.rad2deg(a['signed_yaw_errors'][mask])
                     else:
                         mask = a['poses'][:-1, 0] <= settings['evaluation_end']
                         x = a['times'][:-1][mask]
                         y = (np.linalg.norm(a['applied'][:, :2], axis=1) if quantity=='speed' else a['applied'][:, 2])[mask]
                     curves.append((method, x, y))
                 panel(out/(stem+'_'+quantity), curves, 'Time [s]', label,
-                      reference=0. if quantity=='signed_heading' else 90. if quantity=='heading' else None)
-    chosen = [r for r in rows if r['test'] in ('test4', 'regulation-sweep')]
+                      reference=0. if quantity=='signed_heading' else None)
+    chosen = [r for r in rows if r['test'] in ('test4', 'regulation-sweep', 'acceleration-sweep')]
     if not chosen:
         return
     out = output/chosen[0]['test']
@@ -194,7 +203,7 @@ def figures(output, rows, settings, config):
     # Per-scenario, per-parameter panels preserve distinct units and sweep axes.
     sweep_groups = {}
     for r in chosen:
-        if r['part'] in ('b', 'c', 'd') and r['status']!='error':
+        if (r['part'] in ('b', 'd') or r['test']=='acceleration-sweep') and r['status']!='error':
             sweep_groups.setdefault((r['scenario'], r['parameter']), []).append(r)
     for (scene, parameter), group in sweep_groups.items():
         metric, ylabel = ('crossing_m', 'Crossing [m]') if scene=='offset' else ('eval_max_heading_error_deg', 'Max. heading error [deg]')
@@ -210,7 +219,7 @@ def figures(output, rows, settings, config):
             if series:
                 curves.append((method, [r['value'] for r in series], [r[metric] for r in series]))
         panel(out/(scene+'_'+parameter), curves, xlabels[parameter], ylabel)
-    noise = aggregate([r for r in chosen if r['part']=='e'], ('scenario', 'method', 'noise_xy_m'))
+    noise = aggregate([r for r in chosen if r['test']=='test4' and r['part']=='c'], ('scenario', 'method', 'noise_xy_m'))
     if not noise:
         return
     for scene in ('offset', 'gradual', 'rapid'):

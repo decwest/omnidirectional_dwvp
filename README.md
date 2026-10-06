@@ -93,10 +93,11 @@ available, defaulting to `results/legacy/`. Saved `results/paper/` is preserved.
 | `test1` | 16 conditions: four initial lateral offsets; DWPP, Clipped VP, Scaled VP, DWVP | `test1/` |
 | `test2` | 176 conditions: nine nominal heading ramps, one step, and acceleration sweeps; Clipped VP, Scaled VP, Scaled VP (vel. and acc.), DWVP | `test2/` |
 | `test3` | 4 conditions: obstacle proximity regulation on/off; RPP and DWVP; goal approach regulation always enabled | `test3/` |
-| `test4` | (a) Each VP baseline matched to DWVP travel time, (b) preview (110), (c) acceleration (100), (e) localization noise (1000) | `test4/` |
+| `test4` | (a) Each VP baseline matched to DWVP travel time, (b) preview (110), (c) localization noise (1000) | `test4/` |
+| `acceleration-sweep` | Optional acceleration sweep (100), previously test4 (c); initial offset and two heading ramps | `acceleration-sweep/` |
 | `regulation-sweep` | Optional cost-distance, cost-gain and approach-distance sweep (36); Clipped VP, Scaled VP, DWVP | `regulation-sweep/` |
 | `preview-noise` | Optional full preview × noise grid, three representative paths | `preview-noise/` |
-| `all` | Four studies, every time-match candidate and all 20 noise seeds; excludes both optional grids | `test1/`–`test4/` |
+| `all` | Four studies, every time-match candidate and all 20 noise seeds; excludes all three optional sweeps/grids | `test1/`–`test4/` |
 
 `configs/access_v2.yaml` contains controller settings and the complete study grid.
 The default profile uses 0.22 m/s VP demand and adaptive preview time 0.75 s,
@@ -144,6 +145,21 @@ and 0.2 m with simultaneous x/y/yaw acceleration multipliers 0.25, 0.5, 0.75,
 1.0, 1.5, and 2.0. At 0.3 m, a separate sweep changes only yaw acceleration by
 0.25, 0.5, 1.0, and 2.0. Test4 adds Scaled VP wherever Clipped VP is used;
 the auxiliary velocity-and-acceleration variant is limited to test2.
+
+The publication grid uses Clipped VP, Scaled VP and DWVP only, with one panel
+per transition length and quantity: post-transition heading overshoot, the
+time integral of absolute heading error, and maximum absolute heading error.
+Its horizontal coordinate is `omega_max / (a_omega * T)`, using 0.6 rad/s and
+the nominal preview time `T = 0.75 s`. The six acceleration multipliers map to
+5.33, 2.67, 1.78, 1.33, 0.89 and 0.67. A dotted line at 2 corresponds to
+0.4 rad/s² under the constant-T, maximum-yaw-rate braking approximation;
+the actual adaptive orientation time can differ. Panels are
+`test2/acceleration_ratio_ramp_{1,0p6,0p4,0p3,0p2}_{overshoot,heading_integral,heading}.{pdf,png}`,
+with `acceleration_ratio_legend.{pdf,png}`. The 0.3 m time series at multipliers
+0.25 and 1 are `ramp_0p3_acceleration_{0p25,1}_{speed,yaw,signed_heading}.{pdf,png}`,
+with `acceleration_time_series_legend.{pdf,png}`. They extend beyond the ramp
+to x=3.25 m. Superseded acceleration figures are retained in each test's
+`previous_acceleration_figures/` directory.
 
 Paths are 4 m long with 0.005 m spacing. Orientation ramps start at x=1 m; a zero
 transition length creates a true step with duplicate position samples. Error
@@ -247,15 +263,15 @@ and fixed distances. Upper-active counts mean the uncapped adaptive distance
 exceeded the bound by more than 1e-10; at-upper counts also include equality.
 Counts sum all condition entries, including repeated nominal settings and seeds.
 
-The local pre-round-2 snapshot is under the ignored
-`results/access_v2/trials/comment_round2_baseline/`. To repeat this refresh using
-that snapshot and the original trajectories in the same output tree (the local
-follow-up entry-state snapshot is `build/comment_round2_followup/`):
+The historical pre-round-2 snapshot is under the ignored
+`results/access_v2/trials/comment_round2_baseline/`; the follow-up entry-state
+snapshot is `build/comment_round2_followup/`. The current figure-only refresh
+uses `results/access_v2/trials/test2_grid_baseline/` and performs no simulations:
 
 ```bash
-uv run --offline --locked --python 3.11.11 dwvp-study all --config configs/access_v2.yaml --output results/access_v2 --seed 0 --workers 8 --reuse-round2-baseline results/access_v2/trials/comment_round2_baseline/manifest.json
-uv run --offline --locked --python 3.11.11 python tools/compare_access_round2_followup.py results/access_v2 --baseline results/access_v2/trials/comment_round2_baseline/manifest.json --snapshot build/comment_round2_followup
+uv run --offline --locked --python 3.11.11 python tools/refresh_test2_grid.py results/access_v2
 uv run --offline --locked --python 3.11.11 python tools/validate_access_v2.py results/access_v2
+uv run --offline --locked --python 3.11.11 python tools/validate_access_v2.py results/access_v2_acceleration_sweep --study acceleration-sweep
 ```
 
 Reuse requires unchanged simulation inputs, allowing an equal cap or a tighter,
@@ -264,8 +280,14 @@ Saved trajectories are copied without changing their bytes,
 their metrics are re-evaluated, and their origin is recorded in trial metadata.
 Test3 and active-cap conditions are simulated. Cache hits avoid repeating
 completed work. The snapshot and per-trial histories are local artifacts.
-Run `regulation-sweep` with a separate `--output` directory to produce its own
-manifest and report; it is never included in `all`.
+The grid refresh preserves all 1,427 saved conditions across the main suite
+(1,327) and `results/access_v2_acceleration_sweep` (100). Only suite labels and
+their condition IDs change; trial specifications, trial IDs and metrics are
+unchanged. `test2_grid_refresh.json` records the source transition and hashes;
+the earlier audit records retain their original source hashes. The refresh is
+repeatable from its immutable local baseline. Run `acceleration-sweep` or
+`regulation-sweep` with a separate `--output` directory to produce its own
+manifest and report; neither is included in `all`.
 
 The earlier, one-time mean/lag metric alignment used this command with its
 pre-alignment snapshot (it is not the round-2 migration command):

@@ -12,13 +12,39 @@ from omnidirectional_dwvp.access_studies import numerical_hash, plan_conditions
 from omnidirectional_dwvp.access_metrics import COMMON_METRICS
 from omnidirectional_dwvp.config import Config
 from omnidirectional_dwvp.geometry import wrap
-from omnidirectional_dwvp.studies import code_hash, sha
+from omnidirectional_dwvp.studies import ROOT, code_hash, sha
+
+
+def validate_grid_refresh(root, manifest):
+    """Check the combined main/optional results against the immutable saved run."""
+    audit = json.loads((root/'test2_grid_refresh.json').read_text())
+    assert audit==manifest['test2_grid_refresh'] and audit['source_sha256']==code_hash()
+    baseline = ROOT/audit['baseline_manifest']
+    assert hashlib.sha256(baseline.read_bytes()).hexdigest()==audit['baseline_manifest_sha256']
+    original = json.loads(baseline.read_text())
+    assert original['source_sha256']==audit['previous_source_sha256']
+    assert original['numerical_source_sha256']==manifest['numerical_source_sha256']
+    optional = json.loads((ROOT/audit['optional_output']/'manifest_acceleration-sweep.json').read_text())
+    combined = manifest['trials']+optional['trials']
+    def scientific_rows(trials):
+        return Counter(sha({k: v for k, v in t['summary'].items() if k not in ('test', 'part', 'condition_id')})
+                       for t in trials)
+    assert scientific_rows(combined)==scientific_rows(original['trials'])
+    assert Counter(sha(t['spec']) for t in combined)==Counter(sha(t['spec']) for t in original['trials'])
+    assert len(combined)==audit['preserved_conditions']==audit['unchanged_metric_conditions']
+    assert len(optional['trials'])==audit['optional_conditions']==100
+    assert len(manifest['trials'])==audit['main_conditions'] and audit['simulation_runs']==0
+    preserved = ROOT/audit['preserved_sha256_file']
+    assert hashlib.sha256(preserved.read_bytes()).hexdigest()==audit['preserved_sha256_file_sha256']
+    for path, expected in json.loads(preserved.read_text()).items():
+        assert hashlib.sha256((ROOT/path).read_bytes()).hexdigest()==expected, path
+    return audit
 
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output',type=Path)
-    parser.add_argument('--study', default='all', choices=('all','test1','test2','test3','test4','preview-noise','regulation-sweep'))
+    parser.add_argument('--study', default='all', choices=('all','test1','test2','test3','test4','preview-noise','regulation-sweep','acceleration-sweep'))
     args=parser.parse_args()
     start=perf_counter()
     root=args.output
@@ -27,6 +53,8 @@ def main():
     assert manifest['complete']
     assert manifest['source_sha256']==code_hash()
     assert manifest['numerical_source_sha256']==numerical_hash()
+    grid_refresh = validate_grid_refresh(root, manifest) if 'test2_grid_refresh' in manifest else None
+    previous_source = grid_refresh['previous_source_sha256'] if grid_refresh else manifest['source_sha256']
     alignment = None
     if 'metrics_alignment' in manifest:
         alignment=json.loads((root/'metrics_alignment.json').read_text())
@@ -36,7 +64,7 @@ def main():
     audit_name = ('comment_round2_followup' if 'comment_round2_followup' in manifest else 'comment_round2')
     if audit_name in manifest:
         round2=json.loads((root/f'{audit_name}.json').read_text())
-        assert round2['source_sha256']==manifest['source_sha256']
+        assert round2['source_sha256']==previous_source
         for identity, expected_hash in round2['original_trajectory_sha256'].items():
             assert hashlib.sha256((root/'trials'/identity/'trajectory.npz').read_bytes()).hexdigest()==expected_hash
         if audit_name=='comment_round2_followup':
@@ -62,7 +90,7 @@ def main():
     assert not any(r['part']=='f' for r in rows)
     assert (any(r['part']=='d' for r in rows)) == (args.study=='regulation-sweep')
     assert (any(r['part']=='g' for r in rows)) == (args.study=='preview-noise')
-    noise=[r for r in rows if r['part'] in ('e','g')]
+    noise=[r for r in rows if (r['test']=='test4' and r['part']=='c') or r['part']=='g']
     groups={}
     for row in noise:
         key=tuple(row[k] for k in ('scenario','method','parameter','value','noise_xy_m','noise_yaw_deg'))
@@ -79,7 +107,8 @@ def main():
         assert len([r for r in rows if r['test']=='test3'])==4
         assert {r['method'] for r in rows if r['test']=='test3'}=={'rpp','dwvp'}
     if 'test4' in selected:
-        assert {p:sum(r['test']=='test4' and r['part']==p for r in rows) for p in 'bcde'}==dict(b=110,c=100,d=0,e=1000)
+        assert {p:sum(r['test']=='test4' and r['part']==p for r in rows) for p in 'bcde'}==dict(b=110,c=1000,d=0,e=0)
+        assert not any(r['test']=='test4' and r['parameter'] in ('acceleration_scale','angular_acceleration_scale') for r in rows)
         assert set(manifest['time_matches'])=={'vp','vp_scaled'}
         for method, match in manifest['time_matches'].items():
             assert match['bracketed'] and match['matched']
@@ -89,6 +118,8 @@ def main():
     assert all(t['condition']['config']['approach_distance']>0 for t in manifest['trials'])
     if args.study=='regulation-sweep':
         assert len(rows)==36
+    if args.study=='acceleration-sweep':
+        assert len(rows)==100 and {r['part'] for r in rows}=={'acceleration'}
     checked=set()
     max_velocity_excess=max_acceleration_excess=max_dynamic_window_excess=0.
     for trial in manifest['trials']:
@@ -220,16 +251,16 @@ def main():
         for stem in ('max_heading_vs_length','max_heading_vs_rate_ratio','ramp_0p3_speed','ramp_0p3_yaw','prediction_legend','rate_limit_legend'):
             assert (root/'test2'/f'{stem}.pdf').exists()
         for ell in manifest['settings']['acceleration_transition_lengths']:
-            for quantity in ('heading','position','heading_integral'):
-                stem=f'acceleration_scale_ramp_{ell:g}_{quantity}'.replace('.','p')
-                assert (root/'test2'/f'{stem}.pdf').exists()
-        for quantity in ('heading','position','heading_integral'):
-            assert (root/'test2'/f'angular_acceleration_scale_ramp_0p3_{quantity}.pdf').exists()
-        for scale in set(manifest['settings']['acceleration_time_series_scales']) | {min(manifest['settings']['acceleration_scales'])}:
-            for quantity in ('speed','yaw','signed_heading','heading'):
+            for quantity in ('heading','overshoot','heading_integral'):
+                stem=f'acceleration_ratio_ramp_{ell:g}_{quantity}'.replace('.','p')
+                for extension in ('pdf','png'):
+                    assert (root/'test2'/f'{stem}.{extension}').exists()
+        for scale in (.25, 1.):
+            for quantity in ('speed','yaw','signed_heading'):
                 stem=f'ramp_0.3_acceleration_{scale:g}_{quantity}'.replace('.','p')
                 assert (root/'test2'/f'{stem}.pdf').exists()
         assert (root/'test2'/'acceleration_time_series_legend.pdf').exists()
+        assert (root/'test2'/'acceleration_ratio_legend.pdf').exists()
         with (root/'test2'/'overshoot_prediction.csv').open() as stream:
             predictions=list(csv.DictReader(stream))
         expected_predictions=[r for r in rows if r['test']=='test2' and r['part']=='acceleration' and r['method'] in ('vp','vp_scaled','dwvp')]
@@ -259,8 +290,26 @@ def main():
         section=report.split('## 試験1：')[1].split('## ')[0]
         assert '整定時間 [s]' in section
     if 'test4' in selected:
-        section=report.split('## 試験4：')[1].split('## ')[0]
-        assert '整定時間 [s]' in section and '(d)' not in section
+        section=report.split('## 試験4：')[1].split('\n## ')[0]
+        assert '整定時間 [s]' in section and '(d)' not in section and '(e)' not in section
+        assert '加速度' not in section
+        for title in ('### (a) 走行時間を揃えた比較', '### (b) 前方注視', '### (c) 自己位置推定のノイズ'):
+            assert title in section
+    if 'test2' in selected:
+        section=report.split('### 区間長さと加速度制約の格子')[1].split('\n### ')[0]
+        assert 'T=0.75 s' in section and '比2' in section and 'vp / vp_scaled / dwvp' in section
+        grid_rows=[line for line in section.splitlines() if line.startswith('| ')][1:]
+        assert len(grid_rows)==30
+        expected=[t['summary'] for t in manifest['trials'] if t['condition']['test']=='test2'
+                  and t['condition']['parameter']=='acceleration_scale' and t['condition']['method'] in ('vp','vp_scaled','dwvp')]
+        for line in grid_rows:
+            cells=[cell.strip() for cell in line.split('|')[1:-1]]
+            group=[r for r in expected if f"{r['transition_length_m']:.1f}"==cells[0]
+                   and f"{r['acceleration_time_w_s']/r['lookahead_time_s']:.2f}"==cells[1]]
+            by_method={r['method']:r for r in group}
+            for cell,key in zip(cells[2:],('eval_max_heading_error_deg','eval_heading_error_integral_deg_s',
+                                          'transition_heading_lag_deg','post_transition_heading_overshoot_deg')):
+                assert cell==' / '.join(f"{by_method[m][key]:.2f}" for m in ('vp','vp_scaled','dwvp'))
     if 'test3' in selected:
         section=report.split('## 試験3：')[1].split('## ')[0]
         assert '近傍平均速度 [m/s]' in section and '指令制約違反 [%]' in section
@@ -286,6 +335,7 @@ def main():
                  max_velocity_excess=max_velocity_excess,max_acceleration_excess=max_acceleration_excess,
                  max_dynamic_window_excess=max_dynamic_window_excess,
                  baseline_comparison=manifest.get('method_comparison'),
+                 grid_refresh=grid_refresh,
                  audit_wall_time_s=perf_counter()-start)
     (root/'validation.json').write_text(json.dumps(summary,indent=2)+'\n')
     print(json.dumps(summary,indent=2))

@@ -1,13 +1,13 @@
 {
-  "conditions": 1427,
-  "distinct_trial_specs": 1370,
+  "conditions": 1327,
+  "distinct_trial_specs": 1290,
   "selection_groups": 50,
   "statuses": {
-    "success": 1384,
-    "timeout": 43
+    "success": 1285,
+    "timeout": 42
   },
-  "report_lines": 240,
-  "pdf_png_pairs": 98,
+  "report_lines": 218,
+  "pdf_png_pairs": 84,
   "embedded_fonts": [
     "STIXGeneral-Italic",
     "STIXGeneral-Regular",
@@ -17,5 +17,21 @@
   "max_acceleration_excess": 1.1102230246251565e-15,
   "max_dynamic_window_excess": 0.0,
   "baseline_comparison": null,
-  "audit_wall_time_s": 8.994805143971462
+  "grid_refresh": {
+    "source_sha256": "6f8a0c126f77670cd455a3efd5341f7cd82413a4bd09ab7e2e026b6371f518b1",
+    "previous_source_sha256": "4fe44454c0da5686dfd6102c8fcf5ab0145e2e600b4ac8bf679f1a0d5f9bcd70",
+    "baseline_manifest": "results/access_v2/trials/test2_grid_baseline/manifest.json",
+    "baseline_manifest_sha256": "c94c43d6932b6adb41a65b55849b01d06f18a239d2d22671851d7816d4bb92d4",
+    "preserved_sha256_file": "results/access_v2/trials/test2_grid_baseline/preserved_sha256.json",
+    "preserved_sha256_file_sha256": "c73c3c3d27bcefb6f7a766acd9ae6e2ae8df35a170c70bb266712f22438f7e20",
+    "preserved_conditions": 1427,
+    "unchanged_metric_conditions": 1427,
+    "main_conditions": 1327,
+    "optional_conditions": 100,
+    "relabeled_conditions": 1100,
+    "simulation_runs": 0,
+    "preserved_files": 12122,
+    "optional_output": "results/access_v2_acceleration_sweep"
+  },
+  "audit_wall_time_s": 11.695921966980677
 }

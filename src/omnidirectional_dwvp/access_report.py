@@ -106,30 +106,38 @@ def report(output, rows, manifest):
         lines.extend(['', '## 試験2：経路上の姿勢の追従', ''])
         nominal = [r for r in chosen('test2') if r['part'] in ('nominal', 'step')]
         common_table((('transition_length_m', 'ℓ [m]'), ('method', '手法')), nominal, heading)
-        sweep = [r for r in chosen('test2') if r['part'] == 'acceleration']
+        sweep = [r for r in chosen('test2') if r['part']=='acceleration'
+                 and r['parameter']=='acceleration_scale' and r['method'] in ('vp', 'vp_scaled', 'dwvp')]
         if sweep:
-            lines.extend(['', '### 加速度制約の掃引', '',
-                          '各セルは vp / vp_scaled / vp_scaled_accel / dwvp の順。ωのみは角加速度だけ、それ以外は並進・回転の加速度を同時に変更。'])
-            methods = ('vp', 'vp_scaled', 'vp_scaled_accel', 'dwvp')
+            lines.extend(['', '### 区間長さと加速度制約の格子', '',
+                          '横軸は無次元比 ω_max/(a_ω T)。ω_max=0.6 rad/s、a_ω=0.6×倍率 rad/s²、T=0.75 s（既定の前方注視時間）とする。倍率0.25、0.5、0.75、1、1.5、2は比5.33、2.67、1.78、1.33、0.89、0.67に対応する。',
+                          '図の縦の点線は比2（a_ω=0.4 rad/s²）。右ほど加速度上限が厳しい。これはω=ω_max、T一定とした停止角と残り角度の境界であり、各周期の姿勢所要時間や全条件の行き過ぎ発生を保証する境界ではない。',
+                          '各セルは vp / vp_scaled / dwvp の順。並進・回転の加速度を同時に変更。角加速度のみの掃引と補助比較vp_scaled_accelを含む全176条件の値は `test2/summary.csv` に保持する。'])
+            methods = ('vp', 'vp_scaled', 'dwvp')
             data = []
-            for parameter, ell, scale in dict.fromkeys((r['parameter'], r['transition_length_m'], r['value']) for r in sweep):
-                group = {r['method']: r for r in sweep if (r['parameter'], r['transition_length_m'], r['value']) == (parameter, ell, scale)}
+            for ell, scale in dict.fromkeys((r['transition_length_m'], r['value']) for r in sweep):
+                group = {r['method']: r for r in sweep if (r['transition_length_m'], r['value']) == (ell, scale)}
                 values = [' / '.join(f(group[m].get(k), d) for m in methods)
-                          for k, d in [*zip(metrics, digits), *((k, d) for k, _, d in heading)]]
-                data.append([f(ell, 1), ('ωのみ ' if parameter == 'angular_acceleration_scale' else '')+f(scale, 2), *values])
-            table(['ℓ [m]', '倍率', *headers, *[label for _, label, _ in heading]], data)
+                          for k, d in [('eval_max_heading_error_deg', 2), ('eval_heading_error_integral_deg_s', 2),
+                                       *((k, d) for k, _, d in heading)]]
+                row = group['vp']
+                data.append([f(ell, 1), f(row['acceleration_time_w_s']/row['lookahead_time_s'], 2), *values])
+            table(['ℓ [m]', 'ω_max/(a_ω T)', '最大姿勢誤差 [°]', '姿勢誤差積分 [°·s]',
+                   *[label for _, label, _ in heading]], data)
             if all(r['command_constraint_violation_pct'] == 0 for r in sweep):
                 lines.append('この表の全手法・全条件で、指令が制約を超えた周期の割合は0%。')
             else:
                 table(['ℓ [m]', '倍率', '手法', '指令制約違反 [%]'],
                       [[r['transition_length_m'], r['value'], r['method'], f(r['command_constraint_violation_pct'])] for r in sweep])
+            lines.append('格子図は `test2/acceleration_ratio_ramp_{1,0p6,0p4,0p3,0p2}_{overshoot,heading_integral,heading}`、凡例は `acceleration_ratio_legend`。時系列は `ramp_0p3_acceleration_{0p25,1}_{speed,yaw,signed_heading}`、凡例は `acceleration_time_series_legend`（各PDF/PNG）。時系列は変化区間の終端x=1.3 mを過ぎ、評価上端x=3.25 mまで表示する。')
             comparisons = prediction_comparison(output, rows, manifest)
             lines.extend(['', '### 姿勢の行き過ぎの予測との照合', '',
                           '予測は max(0, ω²/(2aω)−ωT)。T=max(0.20, kL/v所望)。最終姿勢を前方注視点が参照しているときの最初の減速周期を選び、その直前の適用角速度ωと、その周期のLを使う。',
-                          '最終姿勢を横切る直前はすでに減速しているため、停止角の議論に対応する減速開始を採った。各周期の時刻・ω・T・残り角度と予測差は `test2/overshoot_prediction.csv`。',
+                          '最終姿勢を横切る直前はすでに減速しているため、停止角の議論に対応する減速開始を採った。表は区間0.3 mの同時掃引。全条件の時刻・ω・T・残り角度と予測差は `test2/overshoot_prediction.csv`。',
                           '各セルは予測 / 計算結果 [°]。予測はT一定、減速開始時の残り角度ωT、一定の最大角減速度を仮定する。DWVPの速度選択にはこのVP用の仮定を保証しない。'])
             data = []
-            for parameter, ell, scale in dict.fromkeys((r['parameter'], r['transition_length_m'], r['value']) for r in comparisons):
+            for parameter, ell, scale in dict.fromkeys((r['parameter'], r['transition_length_m'], r['value'])
+                    for r in comparisons if r['parameter']=='acceleration_scale' and r['transition_length_m']==.3):
                 group = {r['method']: r for r in comparisons if (r['parameter'], r['transition_length_m'], r['value']) == (parameter, ell, scale)}
                 data.append([f(ell, 1), ('ωのみ ' if parameter == 'angular_acceleration_scale' else '')+f(scale, 2),
                              *[f(group[m]['predicted_heading_overshoot_deg'], 1)+' / '+f(group[m]['observed_heading_overshoot_deg'], 1)
@@ -164,14 +172,18 @@ def report(output, rows, manifest):
         lines.append('並進速度と走行距離の図は `test3/cost0_approach1_distance_speed` と `test3/cost1_approach1_distance_speed`（PDF/PNG）。')
     if chosen('test4'):
         lines.extend(['', '## 試験4：結果の頑健性', '',
-                      '(a)時間一致探索、(b)前方注視、(c)加速度、(e)観測ノイズ。表は区分・経路・手法ごとの条件平均（最大誤差列も各条件の最大値の平均）。'
+                      '表は区分・経路・手法ごとの条件平均（最大誤差列も各条件の最大値の平均）。'
                       '全探索候補とタイムアウトを含む。走行時間は成功試行、整定時間は値が定義された試行の平均。各水準はsummary.csv、ノイズの平均・標本SD・有効数はnoise_summary.csv。ゼロノイズ20 seedは同一軌跡。'])
         grouped = aggregate(chosen('test4'), ('part', 'scenario', 'method'))
         group_rows = [{**g, **{k: g[k+'_mean'] for k in (*COMMON_METRICS, 'crossing_m', 'settling_2pct_time_s', 'transition_heading_lag_deg', 'post_transition_heading_overshoot_deg')},
                        'counts': f"{g['success_count']}/{g['n']}"} for g in grouped]
-        common_table((('part', '区分'), ('scenario', '経路'), ('method', '手法'), ('counts', '成功/条件数')), group_rows, lateral+heading)
-        for method, match in manifest.get('time_matches', {}).items():
-            lines.append(f"(a) {method}: 採用速度倍率 {f(match['best_scale'], 6)}、DWVPとの時間差 {f(match['difference_s'])} s、許容差内={match['matched']}。")
+        for part, title in (('a', '走行時間を揃えた比較'), ('b', '前方注視'), ('c', '自己位置推定のノイズ')):
+            lines.extend(['', f'### ({part}) {title}', ''])
+            common_table((('scenario', '経路'), ('method', '手法'), ('counts', '成功/条件数')),
+                         [r for r in group_rows if r['part']==part], lateral+heading)
+            if part=='a':
+                for method, match in manifest.get('time_matches', {}).items():
+                    lines.append(f"{method}: 採用速度倍率 {f(match['best_scale'], 6)}、DWVPとの時間差 {f(match['difference_s'])} s、許容差内={match['matched']}。")
     if chosen('preview-noise'):
         lines.extend(['', '## 任意試験：前方注視×ノイズ', '',
                       '全条件の共通指標はsummary.csv、水準ごとの平均・標本SD・有効数はnominal_selection.csv。'])
@@ -182,7 +194,14 @@ def report(output, rows, manifest):
         lines.extend(['', '## 任意試験：速度調整パラメータ', ''])
         common_table((('parameter', 'パラメータ'), ('value', '値'), ('method', '手法')), chosen('regulation-sweep'),
                      (('mean_near_obstacle_speed_m_s', '近傍平均速度 [m/s]', 4),))
+    if chosen('acceleration-sweep'):
+        lines.extend(['', '## 任意試験：加速度制約', ''])
+        common_table((('scenario', '経路'), ('parameter', 'パラメータ'), ('value', '倍率'), ('method', '手法')),
+                     chosen('acceleration-sweep'), lateral+heading)
     lines.extend(['', '## 再集計と検証範囲', ''])
+    grid = manifest.get('test2_grid_refresh')
+    if grid:
+        lines.append(f"図と試験区分だけを更新し、既存 {grid['preserved_conditions']} 条件の指標と試行IDをすべて維持した。シミュレーション再実行は0件。保存軌跡・保護ファイル・旧監査記録のSHA-256照合は `test2_grid_refresh.json`。")
     round2 = manifest.get('comment_round2')
     followup = manifest.get('comment_round2_followup')
     if followup:

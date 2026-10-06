@@ -85,7 +85,7 @@ def plan_conditions(config, settings, seed, selected):
                           ax=config.ax*value if parameter=='acceleration_scale' else config.ax,
                           ay=config.ay*value if parameter=='acceleration_scale' else config.ay)
             for scene in representatives:
-                add('test4', 'c', scene, ('dwpp', *both) if scene['kind']=='offset' else both, cfg, parameter, value)
+                add('acceleration-sweep', 'acceleration', scene, ('dwpp', *both) if scene['kind']=='offset' else both, cfg, parameter, value)
     for parameter, key in (('cost_scaling_dist', 'cost_distances'), ('cost_scaling_gain', 'cost_gains'), ('approach_distance', 'approach_distances')):
         for value in settings[key]:
             add('regulation-sweep', 'd', obstacle, both, replace(config, use_cost_regulation=True, **{parameter: value}), parameter, value)
@@ -93,7 +93,7 @@ def plan_conditions(config, settings, seed, selected):
     for xy, yaw_deg in settings['noise_levels']:
         cfg = replace(config, noise_xy=xy, noise_yaw=float(np.deg2rad(yaw_deg)))
         for scene in representatives:
-            add('test4', 'e', scene, ('dwpp', *both) if scene['kind']=='offset' else both, cfg, 'noise', xy, seeds)
+            add('test4', 'c', scene, ('dwpp', *both) if scene['kind']=='offset' else both, cfg, 'noise', xy, seeds)
         for parameter, value in lookaheads:
             for scene in representatives:
                 add('preview-noise', 'g', scene, ('dwvp',), replace(cfg, **{parameter: value}), parameter, value, seeds)
@@ -282,7 +282,7 @@ def run(study, output, config, settings, seed=0, force=False, config_path=None, 
         chosen = [r for r in rows if r['test']==test]
         write_csv(directory/'summary.csv', chosen)
         if test in ('test4', 'preview-noise'):
-            for part, filename in ((('e', 'noise_summary.csv'),) if test=='test4' else (('g', 'nominal_selection.csv'),)):
+            for part, filename in ((('c', 'noise_summary.csv'),) if test=='test4' else (('g', 'nominal_selection.csv'),)):
                 grouped = aggregate([r for r in chosen if r['part']==part],
                                     ('part', 'scenario', 'method', 'parameter', 'value', 'noise_xy_m', 'noise_yaw_deg'))
                 write_csv(directory/filename, grouped)

@@ -1,0 +1,20 @@
+{
+  "conditions": 100,
+  "distinct_trial_specs": 90,
+  "selection_groups": 0,
+  "statuses": {
+    "success": 99,
+    "timeout": 1
+  },
+  "report_lines": 122,
+  "pdf_png_pairs": 7,
+  "embedded_fonts": [
+    "TimesNewRomanPSMT"
+  ],
+  "max_velocity_excess": 0.0,
+  "max_acceleration_excess": 1.1102230246251565e-15,
+  "max_dynamic_window_excess": 0.0,
+  "baseline_comparison": null,
+  "grid_refresh": null,
+  "audit_wall_time_s": 0.5604861999745481
+}
