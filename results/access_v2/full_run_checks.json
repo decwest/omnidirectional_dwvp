@@ -1,0 +1,9 @@
+{
+  "pytest": "66 passed in 3.09 s; offline, locked Python 3.11.11",
+  "validation": "PASS; 4,937 conditions, 4,567 distinct trajectories, 230 noise groups, 4,835 successes, 102 timeouts, 120 PDF/PNG pairs; maximum velocity/dynamic-window excess 0, acceleration excess 1.11e-15",
+  "pytest_command": "uv run --offline --locked --python 3.11.11 pytest -q --basetemp=/tmp/dwvp-full-run/pytest",
+  "validation_command": "uv run --offline --locked --python 3.11.11 python tools/validate_access_v2.py results/access_v2",
+  "visual_inspection": "Checked Test 1 lateral, Test 2 signed orientation and ratio integral, Test 3 speed, Test 4 fixed lookahead, preview-noise, and Test 2 three-method legend.",
+  "historical_artifacts_preserved": 13,
+  "test4_noise_aggregates_verified": 50
+}

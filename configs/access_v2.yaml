@@ -36,7 +36,7 @@ study:
   path_length: 4.0
   path_spacing: 0.005
   ramp_start: 1.0
-  evaluation_end: 3.25
+  evaluation_end: null  # All cycles through the goal criterion or timeout.
   offsets: [0.10, 0.25, 0.50, 1.00]
   transition_lengths: [1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2]
   include_step: true

@@ -147,8 +147,8 @@ and 0.2 m with simultaneous x/y/yaw acceleration multipliers 0.25, 0.5, 0.75,
 the auxiliary velocity-and-acceleration variant is limited to test2.
 
 The publication grid uses Clipped VP, Scaled VP and DWVP only, with one panel
-per transition length and quantity: post-transition heading overshoot, the
-time integral of absolute heading error, and maximum absolute heading error.
+per transition length and quantity: post-transition orientation overshoot, the
+time integral of absolute orientation error, and maximum absolute orientation error.
 Its horizontal coordinate is `omega_max / (a_omega * T)`, using 0.6 rad/s and
 the nominal preview time `T = 0.75 s`. The six acceleration multipliers map to
 5.33, 2.67, 1.78, 1.33, 0.89 and 0.67. A dotted line at 2 corresponds to
@@ -158,7 +158,7 @@ the actual adaptive orientation time can differ. Panels are
 with `acceleration_ratio_legend.{pdf,png}`. The 0.3 m time series at multipliers
 0.25 and 1 are `ramp_0p3_acceleration_{0p25,1}_{speed,yaw,signed_heading}.{pdf,png}`,
 with `acceleration_time_series_legend.{pdf,png}`. They extend beyond the ramp
-to x=3.25 m. Superseded acceleration figures are retained in each test's
+through the goal criterion (or timeout), including terminal settling. Superseded acceleration figures are retained in each test's
 `previous_acceleration_figures/` directory.
 
 All Test 2 publication figures use the same three methods; `vp_scaled_accel`
@@ -176,20 +176,29 @@ The manifest retains the simulation source hash and records the figure refresh.
 
 Paths are 4 m long with 0.005 m spacing. Orientation ramps start at x=1 m; a zero
 transition length creates a true step with duplicate position samples. Error
-metrics use x≤3.25 m, before nominal goal regulation starts at 3.4 m. When approach distance is swept
-to 1 m, the error window ends at 2.995 m. Ray/box nonintersection is evaluated
+metrics now use the whole run: every saved pose from t=0 through the cycle
+at which the simulator's goal criterion is met, including terminal settling.
+The criterion requires position and orientation tolerances plus applied velocity
+components at most 0.001 in magnitude; it is not the earlier first entry into
+the goal tolerance. Timed-out runs contribute errors through the timeout and
+retain their timeout flags. This replaces the former x≤3.25 m rule (and the
+2.995 m cutoff for the 1 m approach-distance sweep). No spatial mask excludes
+reverse progress or motion beyond the goal. `evaluation_end_m` is now empty;
+`evaluation_interval` is `start_to_goal_or_timeout`, and `evaluation_complete`
+means successful goal arrival. Ray/box nonintersection is evaluated
 for all methods independently of whether their solver calls the projection
 branch; terminal cycles are excluded from this count. Travel
 distance is the integrated translation norm, not x progress. The convergence
 metrics include first entry into the 2% band and entry followed by remaining in
-that band to the evaluation boundary. Minimum transition speed includes the
+that band through goal arrival; timeouts and runs ending outside the band have
+undefined settling times. Crossing includes the complete saved motion. Minimum transition speed includes the
 ramp and its preceding instantaneous preview length. Full duration includes
 terminal settling. Position error is distance to the closest path segment.
 Every condition records maximum, time-mean and time-integrated absolute position
-and heading errors. Integrals use trapezoids between adjacent in-window saved
-samples; means divide by `eval_duration_s`, with no boundary extrapolation and
-no integration across excluded samples. The former arithmetic sample means are
-retained as `eval_sample_mean_position_error_m` and
+and orientation errors. Integrals use trapezoids between every adjacent pair of
+saved samples, including the initial and final pose; means divide by
+`eval_duration_s`, which equals the full saved duration. There is no boundary
+extrapolation. Arithmetic sample means over the same full run are retained as `eval_sample_mean_position_error_m` and
 `eval_sample_mean_heading_error_deg`. `command_constraint_violation_pct` is the
 percentage of all command cycles violating either the physical velocity or
 acceleration bounds; `travel_time_s` keeps its full-run, success-only definition.
@@ -198,24 +207,47 @@ separate magnitudes and durations; per-axis physical excess uses the respective
 velocity or acceleration units. Regulated-cap excess remains in CSV only; it is
 excluded from reports and figures. Crossing detection uses a 0.000001 m threshold.
 
-Signed heading error is `wrap(robot yaw - projected reference yaw)` in the saved
+Signed orientation error is `wrap(robot yaw - projected reference yaw)` in the saved
 `signed_yaw_errors` array (radians). For the positive 90-degree ramps, positive
 error is lead and negative error is lag. CSV columns `eval_max_heading_lead_deg`
 and `eval_max_heading_lag_deg` record their nonnegative maxima over the same
-pre-goal evaluation window. `post_transition_heading_overshoot_deg` records the
+full-run evaluation interval. `post_transition_heading_overshoot_deg` records the
 maximum positive excess over final yaw after x exceeds the end of the ramp,
-within that evaluation window; it is missing if the ramp is not passed.
+through goal arrival or timeout; it is missing if the ramp is not passed.
 `transition_heading_lag_deg` restricts lag to the changing-reference interval;
 for a zero-length step it uses the first outgoing sample. The existing
 `eval_max_heading_lag_deg` remains the maximum over the whole evaluation window.
 Test1 and the offset cases in test4 report `crossing_m` as position overshoot
 and `settling_2pct_time_s` as settling time;
-test2 and the ramp cases in test4 report heading lag and post-transition overshoot.
+test2 and the ramp cases in test4 report orientation lag and post-transition overshoot.
 `acceleration_time_vx_s`, `acceleration_time_vy_s`, and `acceleration_time_w_s`
 are the maximum absolute physical axis velocity limits divided by their
 acceleration limits (missing for zero acceleration). `lookahead_time_s` is the
 configured adaptive preview time; `fixed_lookahead_m` identifies conditions
 where fixed distance overrides it.
+
+To re-aggregate all saved Access trajectories without rerunning dynamics:
+
+```bash
+mkdir -p /tmp/dwvp-full-run
+export UV_CACHE_DIR="$PWD/build/uv-cache" MPLCONFIGDIR=/tmp/dwvp-full-run/matplotlib TMPDIR=/tmp/dwvp-full-run PYTHONDONTWRITEBYTECODE=1
+uv run --offline --locked --python 3.11.11 python tools/recompute_access_metrics.py results/access_v2 --baseline results/access_v2/trials/full_run_baseline/manifest.json
+uv run --offline --locked --python 3.11.11 pytest -q --basetemp=/tmp/dwvp-full-run/pytest
+uv run --offline --locked --python 3.11.11 python tools/validate_access_v2.py results/access_v2
+```
+
+The baseline manifest is an immutable local copy of the old evaluation, kept
+alongside the ignored trial histories. `full_run_changes.csv` records every
+changed existing metric (using its original condition ID), and
+`full_run_evaluation.json` records the baseline and trajectory SHA-256 values.
+The manifest retains each original trial specification and trial ID as simulation
+provenance, while condition IDs describe the new full-run evaluation.
+`REPORT.md` includes old → new manuscript tables; `regenerated_files.txt` lists
+all regenerated artifacts, including the archived acceleration panels.
+Travel times, constraint shares, near-obstacle speeds, ramp-local lag, and the
+matched-travel-time search retain their definitions. All figure labels use
+“orientation” and angular-velocity axes use “Angular velocity [rad/s]”; filenames
+and the three-method Test 2 publication figure set are preserved.
 
 Time matching separately scales Clipped VP's and Scaled VP's x/y box, demand and nominal speed request by
 the same factor, leaving acceleration and yaw limits fixed. Its sequential search
@@ -263,7 +295,8 @@ changes only to plotting/reporting can reuse numerical trajectories. The final
 manifest also records the full source hash. Exceptions become explicit `error`
 rows with tracebacks in trial metadata. `issues.csv` lists failed or physically
 violating conditions.
-`REPORT.md` is a generated factual handoff of at most 240 lines, with common
+`REPORT.md` is a generated factual handoff with old/new manuscript tables, a
+complete regenerated-file list, validation results, and common
 metric columns across tests. Test4's compact table averages per-condition
 metrics; individual conditions and noise standard deviations remain in CSV.
 Settling time is also shown in the test1 and test4 tables; undefined values
@@ -318,18 +351,11 @@ repeatable from its immutable local baseline. Run `acceleration-sweep` or
 `regulation-sweep` with a separate `--output` directory to produce its own
 manifest and report; neither is included in `all`.
 
-The earlier, one-time mean/lag metric alignment used this command with its
-pre-alignment snapshot (it is not the round-2 migration command):
-
-```bash
-# Use the repository-local cache variables shown above.
-uv run --offline --locked --python 3.11.11 python tools/recompute_access_metrics.py results/access_v2 --baseline build/metrics_alignment/manifest.before.json
-```
-
-The immutable baseline is created if absent. `metrics_alignment_changes.csv`
-records every changed pre-existing value; only the two means may change.
-`metrics_alignment.json` records every trajectory's unchanged SHA-256. Trial
-IDs and specs retain their original simulation source identity; manifest
+The historical mean/lag alignment is documented in
+`metrics_alignment_changes.csv` and `metrics_alignment.json`; those records
+remain unchanged. The current re-aggregation command above performs full-run
+evaluation and writes `full_run_changes.csv` and `full_run_evaluation.json`.
+Trial IDs and specifications retain their original simulation identity;
 `simulation_source_sha256` and `simulation_numerical_source_sha256` preserve
 generation provenance, while the current source hashes identify the refreshed
 metrics, report and figures. Trial metadata records `metrics_source_sha256`.
@@ -359,14 +385,13 @@ No title is drawn inside panels. Fixed-preview test1 runs can overlay the ideal
 omni orbit and linear PP curve when the initial error is smaller than preview;
 the nominal adaptive-preview figures do not overlay fixed-distance theory.
 
-The test2 sweep figures show maximum heading error versus transition length and
-versus required yaw rate divided by its limit. Their reference line is
+The test2 sweep figures show maximum orientation error versus transition length and
+versus required angular velocity divided by its limit. Their reference line is
 `vp_translation_speed * (pi/2) / w_max = 0.575959 m` (ratio 1); the separate step
 condition is omitted from these finite-rate axes. The 0.3 m time series keeps the
 horizontal prediction `w_max * 0.3 / (pi/2)`, with a separate legend file.
-The acceleration sweep adds separate maximum heading/position error panels for
+The acceleration sweep adds separate maximum orientation/position error panels for
 each interval and a separate yaw-only sweep. At 0.3 m, nominal and half-acceleration
-time series show translation speed, yaw rate, and signed heading error for
-Clipped VP, Scaled VP, and DWVP, with a separate three-method legend. The signed
-error panels end at the pre-goal evaluation boundary; velocity panels show the
-whole run. The report compares every sweep cell without assuming DWVP is best.
+time series show translation speed, angular velocity, and signed orientation error for
+Clipped VP, Scaled VP, and DWVP, with a separate three-method legend. The error and velocity panels show the whole run through the goal criterion
+or timeout. The report compares every sweep cell without assuming DWVP is best.

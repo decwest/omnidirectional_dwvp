@@ -1,4 +1,4 @@
-"""Evaluation windows and aggregates for the straight-path studies."""
+"""Start-to-goal (or timeout) evaluation for the straight-path studies."""
 import math
 import numpy as np
 from .geometry import wrap
@@ -30,8 +30,7 @@ def constraint_violation_counts(velocities, previous, config):
 def time_error_metrics(times, errors, mask):
     """Trapezoids on adjacent in-window samples; never bridge excluded intervals.
 
-    Keep the existing spatial window and sample endpoints (no interpolation at
-    its boundary). A singleton has zero integral and an undefined time mean.
+    A singleton has zero integral and an undefined time mean.
     """
     intervals = mask[:-1] & mask[1:]
     dt = np.diff(times)[intervals]
@@ -40,12 +39,13 @@ def time_error_metrics(times, errors, mask):
     return duration, integral, integral / duration if duration > 0 else None
 
 
-def heading_braking_prediction(a, config, evaluation_end):
+def heading_braking_prediction(a, config, evaluation_end=None):
     """Freeze omega and T at the first braking command with the final target.
 
     Omega is the applied velocity immediately BEFORE that command, not the
     velocity when yaw crosses the final reference. The latter is already reduced
-    by braking and cannot test the proposed stopping-angle argument.
+    by braking and cannot test the proposed stopping-angle argument. The legacy
+    evaluation_end argument is ignored; the entire saved run is available.
     """
     result = dict(heading_braking_time_s=None, heading_braking_omega_rad_s=None,
                   heading_braking_T_s=None, heading_braking_remaining_deg=None,
@@ -54,8 +54,7 @@ def heading_braking_prediction(a, config, evaluation_end):
     previous = np.r_[0., u[:-1, 2]]
     remaining = wrap(path[-1, 2] - p[:-1, 2])
     candidates = np.flatnonzero((previous > TOLERANCE) & (u[:, 2] < previous - TOLERANCE)
-                               & (remaining >= 0.) & (p[:-1, 0] >= 0.)
-                               & (p[:-1, 0] <= evaluation_end))
+                               & (remaining >= 0.))
     for i in candidates:
         # Reconstruct only the preview target index, using the unchanged
         # Euclidean lookahead rule, to exclude braking within the ramp itself.
@@ -76,14 +75,22 @@ def heading_braking_prediction(a, config, evaluation_end):
 
 
 def evaluate(result, config, scenario, initial_pose, evaluation_end, ramp_start):
+    """Include every saved pose, from t=0 through the simulation's final cycle.
+
+    Simulation already stops at its goal criterion or timeout. Keep the legacy
+    evaluation_end argument for reading historical specifications, but ignore
+    its spatial cutoff. A timeout retains errors through its last sample and
+    remains incomplete for goal-arrival and settling-time reporting.
+    """
     a = result.arrays
     p, u = a['poses'], a['applied']
     distance = np.r_[0., np.cumsum(np.linalg.norm(u[:, :2], axis=1) * config.dt)]
     a['travel_distance'] = distance
-    mask = (p[:, 0] >= -1e-10) & (p[:, 0] <= evaluation_end)
+    mask = np.ones(len(p), dtype=bool)
     m = dict(result.metrics)
-    m['evaluation_end_m'] = evaluation_end
-    m['evaluation_complete'] = bool(np.any(p[:, 0] >= evaluation_end))
+    m['evaluation_end_m'] = None
+    m['evaluation_interval'] = 'start_to_goal_or_timeout'
+    m['evaluation_complete'] = bool(m['success'] and not m['collision'])
     m['evaluation_samples'] = int(mask.sum())
     m['eval_max_heading_error_deg'] = float(np.rad2deg(a['yaw_errors'][mask].max())) if mask.any() else None
     m['eval_sample_mean_heading_error_deg'] = float(np.rad2deg(a['yaw_errors'][mask].mean())) if mask.any() else None
@@ -146,7 +153,7 @@ def evaluate(result, config, scenario, initial_pose, evaluation_end, ramp_start)
                 changing[indices[0]] = True
         if changing.any():
             m['transition_heading_lag_deg'] = max(0., float(np.rad2deg(-signed_yaw[changing].min())))
-        # Same pre-goal evaluation window as the other tracking errors. All
+        # Continue through goal arrival (or timeout), including terminal control. All
         # configured ramps turn positively through pi/2, so positive is overshoot.
         after = mask & (p[:, 0] > ramp_start + ell)
         if after.any():

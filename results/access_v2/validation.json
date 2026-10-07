@@ -6,8 +6,8 @@
     "success": 4835,
     "timeout": 102
   },
-  "report_lines": 239,
-  "pdf_png_pairs": 88,
+  "report_lines": 719,
+  "pdf_png_pairs": 120,
   "embedded_fonts": [
     "STIXGeneral-Italic",
     "STIXGeneral-Regular",
@@ -18,5 +18,11 @@
   "max_dynamic_window_excess": 0.0,
   "baseline_comparison": null,
   "grid_refresh": null,
-  "audit_wall_time_s": 29.784702444972936
+  "full_run_evaluation": {
+    "conditions": 4937,
+    "distinct_trajectories": 4567,
+    "simulation_runs": 0,
+    "unexpected_existing_metric_changes": 0
+  },
+  "audit_wall_time_s": 40.369379211973865
 }

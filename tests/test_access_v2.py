@@ -260,12 +260,15 @@ def test_heading_grid_plots_ratio_boundary_three_methods_and_post_ramp_times(tmp
         for quantity in ('speed','yaw','signed_heading'):
             ax=captured[f'ramp_0p3_acceleration_{scale}_{quantity}'].axes[0]
             for line in ax.lines[:3]:
-                # The last included pose is x=2 m, beyond the ramp end x=1.3 m.
-                np.testing.assert_allclose(line.get_xdata(),[0.,2.,4.])
+                # Include the final saved pose beyond the former x=3.25 m cutoff.
+                expected=[0.,2.,4.,6.] if quantity=='signed_heading' else [0.,2.,4.]
+                np.testing.assert_allclose(line.get_xdata(),expected)
             if quantity=='signed_heading':
-                np.testing.assert_allclose(ax.lines[0].get_ydata(),np.rad2deg([0.,-.1,.2]))
+                np.testing.assert_allclose(ax.lines[0].get_ydata(),np.rad2deg([0.,-.1,.2,0.]))
     labels=[text.get_text() for text in captured['acceleration_ratio_legend'].legends[0].get_texts()]
     assert labels[:3]==['Clipped VP','Scaled VP','DWVP'] and len(labels)==4
+    assert captured['ramp_0p3_acceleration_1_yaw'].axes[0].get_ylabel()=='Angular velocity [rad/s]'
+    assert captured['ramp_0p3_acceleration_1_signed_heading'].axes[0].get_ylabel()=='Signed orientation error [deg]'
     assert plotting.plt.rcParams['pdf.fonttype']==42 and plotting.plt.rcParams['mathtext.fontset']=='stix'
 
 
@@ -294,11 +297,11 @@ def test_clipped_vp_nonintersection_is_geometric_not_solver_mode():
     assert np.any(~result.arrays['ray_intersects_box'])
 
 
-def test_evaluation_window_precedes_swept_goal_regulation():
+def test_evaluation_interval_is_full_run_even_with_swept_goal_regulation():
     profile=yaml.safe_load((ROOT/'configs/access_v2.yaml').read_text());settings=profile.pop('study')
     conditions,_=plan_conditions(Config(**profile),settings,0,('regulation-sweep',))
     condition=next(c for c in conditions if c['parameter']=='approach_distance' and c['value']==1.)
-    assert condition['evaluation_end']==pytest.approx(2.995)
+    assert condition['evaluation_end'] is None
 
 
 def test_dwvp_always_selects_fastest_point_inside_stopping_distance():
@@ -386,7 +389,7 @@ def test_signed_heading_metrics_distinguish_lead_lag_and_post_transition_oversho
     config=Config(timeout=.1)
     result=simulate(orientation_ramp_path(.3),'vp',config)
     a=result.arrays
-    a['poses'][:,0]=[.9,1.15,1.31,1.4]
+    a['poses'][:,0]=[-.1,1.15,3.5,4.0]
     a['reference_poses'][:,2]=np.deg2rad([0.,45.,90.,90.])
     a['poses'][:,2]=np.deg2rad([10.,20.,100.,85.])
     a['yaw_errors']=np.deg2rad([10.,25.,10.,5.])
@@ -453,6 +456,17 @@ def test_baseline_comparison_keeps_existing_position_error_and_checks_missing_co
     comparison=compare_baseline(tmp_path,{'trials':[current]},baseline)
     assert comparison['changed_conditions']==1
     assert comparison['reported_changes'][0]['metric']=='eval_max_position_error_m'
+    # A saved full-run baseline has no spatial cutoff. Its time mean must not
+    # be silently replaced by an arithmetic sample mean during comparison.
+    summary['eval_mean_position_error_m']=.2
+    current['summary'].update(eval_max_position_error_m=.25,eval_mean_position_error_m=.2)
+    baseline.write_text(json.dumps(old))
+    directory=tmp_path/'trials'/'before'
+    directory.mkdir(parents=True)
+    np.savez(directory/'trajectory.npz',poses=[[0.,0.,0.],[4.,0.,0.]],path=[[0.,0.,0.],[4.,0.,0.]],
+             position_errors=[.1,.2])
+    comparison=compare_baseline(tmp_path,{'trials':[current]},baseline)
+    assert comparison['changed_conditions']==0
 
 
 @pytest.mark.parametrize('offset', [-.05, 0., .05, .3])
@@ -543,3 +557,32 @@ def test_saved_trajectory_reuse_rejects_active_cap_and_changed_inputs():
     assert not reusable_lookahead({'lookahead':np.array([.17])},cfg,new)
     assert not reusable_lookahead({'lookahead':np.array([.11])},cfg,replace(new,ax=.1))
     assert reusable_lookahead({'lookahead':np.array([.44])},replace(cfg,fixed_lookahead=.44),replace(new,fixed_lookahead=.44))
+
+
+@pytest.mark.parametrize('success', [False, True])
+def test_full_run_metrics_include_negative_progress_terminal_errors_and_final_sample(success):
+    cfg=Config(timeout=.2)
+    result=simulate(straight_path(),'vp',cfg,initial_pose=[0.,.5,0.])
+    a=result.arrays
+    a['poses'][:,0]=[-.01,1.,2.,3.,3.5,3.8,4.]
+    a['poses'][:,1]=[.5,.01,0.,0.,-.08,.005,0.]
+    a['position_errors']=np.abs(a['poses'][:,1])
+    a['poses'][:,2]=np.deg2rad([0.,0.,0.,0.,1.,9.,2.])
+    a['reference_poses'][:,2]=0.
+    a['yaw_errors']=np.abs(a['poses'][:,2])
+    result.metrics.update(success=success,timeout=not success,collision=False)
+    m=evaluate(result,cfg,{'kind':'offset'},[0.,.5,0.],3.25,1.)
+    assert m['evaluation_samples']==7 and m['evaluation_end_m'] is None
+    assert m['evaluation_complete']==success
+    assert m['evaluation_interval']=='start_to_goal_or_timeout'
+    assert m['eval_duration_s']==pytest.approx(.2)
+    assert m['eval_max_position_error_m']==pytest.approx(.5)
+    assert m['eval_max_heading_error_deg']==pytest.approx(9.)
+    for errors,integral,mean in ((a['position_errors'],'eval_position_error_integral_m_s','eval_mean_position_error_m'),
+                                 (np.rad2deg(a['yaw_errors']),'eval_heading_error_integral_deg_s','eval_mean_heading_error_deg')):
+        expected=np.trapezoid(errors,a['times'])
+        assert m[integral]==pytest.approx(expected)
+        assert m[mean]==pytest.approx(expected/.2)
+    assert m['crossing_m']==pytest.approx(.08)
+    assert m['first_2pct_time_s']==pytest.approx(cfg.dt)
+    assert m['settling_2pct_time_s']==(pytest.approx(5*cfg.dt) if success else None)

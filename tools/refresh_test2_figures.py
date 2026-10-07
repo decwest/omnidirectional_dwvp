@@ -21,8 +21,8 @@ def archived_acceleration_figures(output, rows, existing):
     for parameter, ell in dict.fromkeys((r['parameter'], r['transition_length_m']) for r in rows):
         group = [r for r in rows if r['parameter']==parameter and r['transition_length_m']==ell]
         stem = f'{parameter}_ramp_{ell:g}'.replace('.', 'p')
-        for metric, suffix, label in (('eval_max_heading_error_deg', 'heading', 'Max. heading error [deg]'),
-                                      ('eval_heading_error_integral_deg_s', 'heading_integral', 'Heading error integral [deg s]'),
+        for metric, suffix, label in (('eval_max_heading_error_deg', 'heading', 'Max. orientation error [deg]'),
+                                      ('eval_heading_error_integral_deg_s', 'heading_integral', 'Orientation error integral [deg s]'),
                                       ('eval_max_position_error_m', 'position', 'Max. position error [m]')):
             name = stem+'_'+suffix
             if not (existing/(name+'.pdf')).is_file():
@@ -32,7 +32,7 @@ def archived_acceleration_figures(output, rows, existing):
                 series = sorted([r for r in group if r['method']==method], key=lambda r: r['value'])
                 curves.append((method, [r['value'] for r in series], [r[metric] for r in series]))
             panel(output/name, curves,
-                  'Acceleration multiplier' if parameter=='acceleration_scale' else 'Yaw acceleration multiplier', label)
+                  'Acceleration multiplier' if parameter=='acceleration_scale' else 'Angular acceleration multiplier', label)
 
 
 def main():

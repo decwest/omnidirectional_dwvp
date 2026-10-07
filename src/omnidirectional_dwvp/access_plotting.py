@@ -97,7 +97,7 @@ def figures(output, rows, settings, config):
             if test=='test1':
                 fig, ax = plt.subplots(figsize=(3.35, 2.15))
                 for method, a in data:
-                    mask = a['poses'][:, 0] <= settings['evaluation_end']
+                    mask = np.ones(len(a['poses']), dtype=bool)
                     ax.plot(a['travel_distance'][mask], a['poses'][mask, 1], color=COLORS[method], ls=STYLES[method], lw=1.)
                 if config.fixed_lookahead is not None and abs(group[0]['offset_m']) < config.fixed_lookahead:
                     s = data[0][1]['travel_distance']
@@ -111,11 +111,11 @@ def figures(output, rows, settings, config):
             if test=='test2':
                 curves = []
                 for method, a in data:
-                    mask = a['poses'][:, 0] <= settings['evaluation_end']
+                    mask = np.ones(len(a['poses']), dtype=bool)
                     curves.append((method, a['travel_distance'][mask], np.rad2deg(a['yaw_errors'][mask])))
-                panel(out/(name+'_heading'), curves, 'Travel distance [m]', 'Heading error [deg]')
+                panel(out/(name+'_heading'), curves, 'Travel distance [m]', 'Orientation error [deg]')
             if test in ('test2', 'test3'):
-                for quantity, label in (('speed', 'Translation speed [m/s]'), ('yaw', 'Yaw rate [rad/s]')):
+                for quantity, label in (('speed', 'Translation speed [m/s]'), ('yaw', 'Angular velocity [rad/s]')):
                     curves = [(m, a['times'][:-1], np.linalg.norm(a['applied'][:, :2], axis=1) if quantity=='speed' else a['applied'][:, 2]) for m, a in data]
                     reference = group[0].get('predicted_speed_m_s') if quantity=='speed' and test=='test2' else None
                     panel(out/(name+'_'+quantity), curves, 'Time [s]', label, reference)
@@ -144,15 +144,15 @@ def figures(output, rows, settings, config):
                 curves.append((method, [critical/r['transition_length_m'] if ratio else r['transition_length_m'] for r in series],
                                [r['eval_max_heading_error_deg'] for r in series]))
             panel(out/('max_heading_vs_rate_ratio' if ratio else 'max_heading_vs_length'), curves,
-                  r'Required yaw rate / limit' if ratio else 'Orientation transition length [m]',
-                  'Max. heading error [deg]', vertical=1. if ratio else critical)
+                  r'Required angular velocity / limit' if ratio else 'Orientation transition length [m]',
+                  'Max. orientation error [deg]', vertical=1. if ratio else critical)
         fig = plt.figure(figsize=(3.35, .3))
         fig.legend(handles=[Line2D([], [], color='0.35', ls=':', lw=.7,
                                   label=r'$\omega_{\max}\ell/(\pi/2)$')], loc='center', ncol=1, frameon=False)
         save(fig, out/'prediction_legend')
         fig = plt.figure(figsize=(3.35, .3))
         fig.legend(handles=[Line2D([], [], color='0.35', ls=':', lw=.7,
-                                  label='Required yaw rate = limit')], loc='center', ncol=1, frameon=False)
+                                  label='Required angular velocity = limit')], loc='center', ncol=1, frameon=False)
         save(fig, out/'rate_limit_legend')
     acceleration = [r for r in rows if r['test']=='test2' and r['part']=='acceleration' and r['status']!='error']
     if acceleration:
@@ -166,9 +166,9 @@ def figures(output, rows, settings, config):
                 continue
             ratio = lambda r: r['acceleration_time_w_s']/r['lookahead_time_s']
             stem = f'acceleration_ratio_ramp_{ell:g}'.replace('.', 'p')
-            for metric, suffix, label in (('post_transition_heading_overshoot_deg', 'overshoot', 'Heading overshoot [deg]'),
-                                          ('eval_heading_error_integral_deg_s', 'heading_integral', 'Heading error integral [deg s]'),
-                                          ('eval_max_heading_error_deg', 'heading', 'Max. heading error [deg]')):
+            for metric, suffix, label in (('post_transition_heading_overshoot_deg', 'overshoot', 'Orientation overshoot [deg]'),
+                                          ('eval_heading_error_integral_deg_s', 'heading_integral', 'Orientation error integral [deg s]'),
+                                          ('eval_max_heading_error_deg', 'heading', 'Max. orientation error [deg]')):
                 curves = []
                 for method in methods:
                     series = sorted([r for r in group if r['method']==method], key=ratio)
@@ -184,16 +184,16 @@ def figures(output, rows, settings, config):
                 with np.load(output/'trials'/row['trial_id']/'trajectory.npz') as a:
                     data.append((row['method'], {k:a[k] for k in a}))
             stem = f"ramp_{settings['representative_rapid']:g}_acceleration_{scale:g}".replace('.', 'p')
-            for quantity, label in (('speed', 'Translation speed [m/s]'), ('yaw', 'Yaw rate [rad/s]'),
-                                    ('signed_heading', 'Signed heading error [deg]')):
+            for quantity, label in (('speed', 'Translation speed [m/s]'), ('yaw', 'Angular velocity [rad/s]'),
+                                    ('signed_heading', 'Signed orientation error [deg]')):
                 curves = []
                 for method, a in data:
                     if quantity=='signed_heading':
-                        mask = a['poses'][:, 0] <= settings['evaluation_end']
+                        mask = np.ones(len(a['poses']), dtype=bool)
                         x = a['times'][mask]
                         y = np.rad2deg(a['signed_yaw_errors'][mask])
                     else:
-                        mask = a['poses'][:-1, 0] <= settings['evaluation_end']
+                        mask = np.ones(len(a['applied']), dtype=bool)
                         x = a['times'][:-1][mask]
                         y = (np.linalg.norm(a['applied'][:, :2], axis=1) if quantity=='speed' else a['applied'][:, 2])[mask]
                     curves.append((method, x, y))
@@ -210,11 +210,11 @@ def figures(output, rows, settings, config):
         if (r['part'] in ('b', 'd') or r['test']=='acceleration-sweep') and r['status']!='error':
             sweep_groups.setdefault((r['scenario'], r['parameter']), []).append(r)
     for (scene, parameter), group in sweep_groups.items():
-        metric, ylabel = ('crossing_m', 'Crossing [m]') if scene=='offset' else ('eval_max_heading_error_deg', 'Max. heading error [deg]')
+        metric, ylabel = ('crossing_m', 'Crossing [m]') if scene=='offset' else ('eval_max_heading_error_deg', 'Max. orientation error [deg]')
         if scene=='obstacles':
             metric, ylabel = 'mean_near_obstacle_speed_m_s', 'Near-obstacle mean speed [m/s]'
         xlabels = {'fixed_lookahead':'Lookahead distance [m]', 'lookahead_time':'Lookahead time [s]',
-                   'acceleration_scale':'Acceleration multiplier', 'angular_acceleration_scale':'Yaw acceleration multiplier',
+                   'acceleration_scale':'Acceleration multiplier', 'angular_acceleration_scale':'Angular acceleration multiplier',
                    'cost_scaling_dist':'Cost distance [m]', 'cost_scaling_gain':'Cost gain',
                    'approach_distance':'Approach distance [m]', 'vp_translation_speed':'Desired translation speed [m/s]'}
         curves = []
@@ -227,7 +227,7 @@ def figures(output, rows, settings, config):
     if not noise:
         return
     for scene in ('offset', 'gradual', 'rapid'):
-        metric, label = ('crossing_m', 'Crossing [m]') if scene=='offset' else ('eval_max_heading_error_deg', 'Max. heading error [deg]')
+        metric, label = ('crossing_m', 'Crossing [m]') if scene=='offset' else ('eval_max_heading_error_deg', 'Max. orientation error [deg]')
         fig, ax = plt.subplots(figsize=(3.35, 2.15))
         for method in ('dwpp', 'vp', 'vp_scaled', 'dwvp'):
             series = sorted([r for r in noise if r['scenario']==scene and r['method']==method], key=lambda r:r['noise_xy_m'])

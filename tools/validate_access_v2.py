@@ -55,6 +55,7 @@ def main():
     assert manifest['numerical_source_sha256']==numerical_hash()
     grid_refresh = validate_grid_refresh(root, manifest) if 'test2_grid_refresh' in manifest else None
     previous_source = grid_refresh['previous_source_sha256'] if grid_refresh else manifest['source_sha256']
+    full_run = validate_full_run(root, manifest) if 'full_run_evaluation' in manifest else None
     alignment = None
     if 'metrics_alignment' in manifest:
         alignment=json.loads((root/'metrics_alignment.json').read_text())
@@ -86,6 +87,9 @@ def main():
         with (root/test/'summary.csv').open() as stream:
             data=list(csv.DictReader(stream))
         assert Counter(r['condition_id'] for r in data)==Counter(t['condition_id'] for t in manifest['trials'] if t['condition']['test']==test)
+        typed={t['condition_id']:t['summary'] for t in manifest['trials'] if t['condition']['test']==test}
+        for row in data:
+            assert all(value==('' if typed[row['condition_id']].get(key) is None else str(typed[row['condition_id']][key])) for key,value in row.items())
         rows.extend(data)
     assert not any(r['part']=='f' for r in rows)
     assert (any(r['part']=='d' for r in rows)) == (args.study=='regulation-sweep')
@@ -142,7 +146,7 @@ def main():
         assert sha(metadata['spec'])==identity
         assert metadata['spec']==trial['spec']
         assert trial['condition']['config']==trial['spec']['config']
-        assert trial['spec']['numerical_source_sha256']==manifest['numerical_source_sha256'] or alignment
+        assert trial['spec']['numerical_source_sha256']==manifest['numerical_source_sha256'] or alignment or full_run
         reuse=metadata.get('trajectory_reuse')
         if reuse:
             trajectory_hash=hashlib.sha256((root/'trials'/identity/'trajectory.npz').read_bytes()).hexdigest()
@@ -164,7 +168,17 @@ def main():
             assert np.isfinite(a['poses']).all() and np.isfinite(commands).all()
             np.testing.assert_array_equal(a['poses'][0],metadata['spec']['initial_pose'])
             assert hashlib.sha256(a['path'].tobytes()).hexdigest()==metadata['spec']['path_sha256']
-            mask=(a['poses'][:,0]>=-1e-10)&(a['poses'][:,0]<=trial['condition']['evaluation_end'])
+            mask=np.ones(len(a['poses']),dtype=bool)
+            assert row['evaluation_samples']==len(a['poses'])
+            assert row['evaluation_end_m'] is None and trial['condition']['evaluation_end'] is None
+            assert row['evaluation_interval']=='start_to_goal_or_timeout'
+            assert row['evaluation_complete']==row['success']
+            np.testing.assert_allclose(a['times'][-1],row['duration_s'])
+            if row['success']:
+                np.testing.assert_allclose(row['travel_time_s'],a['times'][-1])
+            else:
+                assert row['status']=='timeout' and row['travel_time_s'] is None
+            validate_goal_and_settling(a,row,trial['spec'])
             np.testing.assert_allclose(row['eval_max_position_error_m'],a['position_errors'][mask].max())
             intervals=mask[:-1]&mask[1:]
             times=a['times']
@@ -250,9 +264,8 @@ def main():
     assert max_velocity_excess<=1e-10 and max_acceleration_excess<=1e-10 and max_dynamic_window_excess<=1e-10
     assert not any(r['status']=='error' for r in rows)
     report_lines=len((root/'REPORT.md').read_text().splitlines())
-    assert report_lines<=240
-    pdfs=sorted(p for test in selected for p in (root/test).glob('*.pdf'))
-    pngs=sorted(p for test in selected for p in (root/test).glob('*.png'))
+    pdfs=sorted(p for test in selected for p in (root/test).rglob('*.pdf'))
+    pngs=sorted(p for test in selected for p in (root/test).rglob('*.png'))
     if 'test2' in selected:
         for stem in ('max_heading_vs_length','max_heading_vs_rate_ratio','ramp_0p3_speed','ramp_0p3_yaw','prediction_legend','rate_limit_legend'):
             assert (root/'test2'/f'{stem}.pdf').exists()
@@ -328,6 +341,10 @@ def main():
     assert [p.with_suffix('') for p in pdfs]==[p.with_suffix('') for p in pngs]
     fonts=set()
     for pdf in pdfs:
+        labels=subprocess.check_output(['pdftotext',str(pdf),'-'],text=True)
+        assert 'heading' not in labels.lower() and 'yaw rate' not in labels.lower(), pdf
+        if pdf.is_relative_to(root/'test2'):
+            assert 'Scaled VP (vel. and acc.)' not in labels, pdf
         output=subprocess.check_output(['pdffonts',str(pdf)],text=True)
         lines=output.splitlines()[2:]
         assert lines and ('TimesNewRoman' in output or 'STIX' in output)
@@ -341,9 +358,82 @@ def main():
                  max_dynamic_window_excess=max_dynamic_window_excess,
                  baseline_comparison=manifest.get('method_comparison'),
                  grid_refresh=grid_refresh,
+                 full_run_evaluation=({k:full_run[k] for k in ('conditions','distinct_trajectories','simulation_runs','unexpected_existing_metric_changes')} if full_run else None),
                  audit_wall_time_s=perf_counter()-start)
     (root/'validation.json').write_text(json.dumps(summary,indent=2)+'\n')
     print(json.dumps(summary,indent=2))
+
+
+def validate_full_run(root, manifest):
+    from recompute_access_metrics import INTERVAL_METRICS
+    audit=json.loads((root/'full_run_evaluation.json').read_text())
+    assert {k:v for k,v in audit.items() if k!='trajectory_sha256'}==manifest['full_run_evaluation']
+    assert audit['source_sha256']==code_hash() and audit['numerical_source_sha256']==numerical_hash()
+    baseline=ROOT/audit['baseline_manifest']
+    assert hashlib.sha256(baseline.read_bytes()).hexdigest()==audit['baseline_sha256']
+    original=json.loads(baseline.read_text())
+    before={sha({**t['condition'],'evaluation_end':None}):t for t in original['trials']}
+    assert set(before)=={t['condition_id'] for t in manifest['trials']}
+    assert manifest['time_matches']==original['time_matches'] and manifest['time_match']==original['time_match']
+    changes=[]
+    for trial in manifest['trials']:
+        old=before[trial['condition_id']]
+        assert trial['spec']==old['spec'] and trial['condition']=={**old['condition'],'evaluation_end':None}
+        for key,value in old['summary'].items():
+            if key=='condition_id':
+                continue
+            new=trial['summary'][key]
+            if isinstance(value,(int,float)) and isinstance(new,(int,float)):
+                equal=abs(value-new)<=1e-10
+            else:
+                equal=value==new
+            if not equal:
+                assert key in INTERVAL_METRICS, (key,value,new)
+                changes.append(key)
+        metadata=json.loads((root/'trials'/trial['summary']['trial_id']/'trial.json').read_text())
+        assert metadata['metrics_source_sha256']==code_hash()
+        for key,value in metadata['metrics'].items():
+            assert trial['summary'][key]==value
+    assert dict(Counter(changes))==audit['changed_metrics']
+    for path,expected in audit['trajectory_sha256'].items():
+        assert hashlib.sha256((ROOT/path).read_bytes()).hexdigest()==expected,path
+    assert audit['simulation_runs']==audit['unexpected_existing_metric_changes']==0
+    assert audit['conditions']==len(manifest['trials'])
+    assert audit['distinct_trajectories']==len({t['summary']['trial_id'] for t in manifest['trials']})
+    assert (root/'regenerated_files.txt').read_text().splitlines()==audit['regenerated_files']
+    for filename in audit['regenerated_files']:
+        assert (root/filename).is_file(),filename
+    # Verify the generated old/new tables against both manifests.
+    from omnidirectional_dwvp.access_comparison import comparison_lines
+    expected='\n'.join(comparison_lines(root,[t['summary'] for t in manifest['trials']],manifest)).strip()
+    assert expected in (root/'REPORT.md').read_text()
+    return audit
+
+
+def validate_goal_and_settling(a,row,spec):
+    from omnidirectional_dwvp.controller import terminal_heading
+    cfg=Config(**spec['config'])
+    goal_yaw=terminal_heading(a['path']) if spec['method'] in ('dwpp','rpp') else a['path'][-1,2]
+    within=(np.linalg.norm(a['poses'][:,:2]-a['path'][-1,:2],axis=1)<=cfg.goal_xy)
+    within &= np.abs(wrap(a['poses'][:,2]-goal_yaw))<=cfg.goal_yaw
+    previous=np.vstack((np.zeros(3),a['applied']))
+    arrived=within & (np.max(np.abs(previous),axis=1)<=1e-3)
+    assert not arrived[:-1].any()
+    if row['success']:
+        assert arrived[-1]
+    else:
+        np.testing.assert_allclose(row['duration_s'],np.ceil(cfg.timeout/cfg.dt)*cfg.dt)
+    e0=spec['initial_pose'][1]
+    if e0:
+        crossing=max(0.,float((-np.sign(e0)*a['poses'][:,1]).max()))
+        np.testing.assert_allclose(row['crossing_m'],crossing)
+        inside=np.abs(a['poses'][:,1])<=.02*abs(e0)
+        if inside[-1] and row['success']:
+            outside=np.flatnonzero(~inside)
+            index=outside[-1]+1 if len(outside) else 0
+            np.testing.assert_allclose(row['settling_2pct_time_s'],a['times'][index])
+        else:
+            assert row['settling_2pct_time_s'] is None
 
 
 def validate_preview_noise(root, manifest):

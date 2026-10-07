@@ -58,7 +58,7 @@ def report(output, rows, manifest):
     lines = ['# シミュレーション結果', '',
              f"条件数 {len(rows)}、保存試行ID {manifest['distinct_trajectories']}。成功 {manifest['success_count']}、タイムアウト {manifest['timeout_count']}、その他失敗 {manifest['failure_count']}。",
              f"設定は `manifest.json`、全条件の指標は各試験の `summary.csv`。既定の設定：30 Hz、速度上限 ±0.22 m/s・±0.6 rad/s、加速度上限 0.22 m/s²・0.6 rad/s²、VP所望並進速度 0.22 m/s、前方注視時間 0.75 s、前方注視距離上限 {manifest['config']['lookahead_max']:g} m（固定距離の掃引は別指定）。",
-             '誤差の評価は従来どおり 0≤x≤3.25 m の保存試料。接近距離1 mの既存条件だけ上端2.995 m。境界への外挿はしない。'
+             '誤差は開始時刻からシミュレーションのゴール判定成立時までの全保存試料で評価する。終端の減速・整定も含む。タイムアウトは終了時までを評価し、未成功として残す。'
              '位置誤差は経路への距離、姿勢誤差は線分射影位置の参照姿勢との差の絶対値。積分は隣接する評価内試料間の台形則、平均は積分÷評価時間。',
              '走行時間と指令制約違反率は従来どおり全走行で評価する。時間は成功時だけ記録し、タイムアウトは空欄。制約違反は速度または加速度超過の周期数÷全周期数（閾値1e−10）。',
              '位置の行き過ぎは初期横偏差と反対側への最大偏差。姿勢の遅れは姿勢変化区間内の参照−ロボットの最大値、行き過ぎは区間通過後のロボット−最終参照の最大値（いずれも非負）。'
@@ -126,7 +126,7 @@ def report(output, rows, manifest):
             if any(r['command_constraint_violation_pct'] != 0 for r in sweep):
                 table(['ℓ [m]', '倍率', '手法', '指令制約違反 [%]'],
                       [[r['transition_length_m'], r['value'], r['method'], f(r['command_constraint_violation_pct'])] for r in sweep])
-            lines.append('格子図は `test2/acceleration_ratio_ramp_{1,0p6,0p4,0p3,0p2}_{overshoot,heading_integral,heading}`、凡例は `acceleration_ratio_legend`。時系列は `ramp_0p3_acceleration_{0p25,1}_{speed,yaw,signed_heading}`、凡例は `acceleration_time_series_legend`（各PDF/PNG）。時系列は変化区間の終端x=1.3 mを過ぎ、評価上端x=3.25 mまで表示する。')
+            lines.append('格子図は `test2/acceleration_ratio_ramp_{1,0p6,0p4,0p3,0p2}_{overshoot,heading_integral,heading}`、凡例は `acceleration_ratio_legend`。時系列は `ramp_0p3_acceleration_{0p25,1}_{speed,yaw,signed_heading}`、凡例は `acceleration_time_series_legend`（各PDF/PNG）。時系列は変化区間の終端x=1.3 mを過ぎ、ゴール判定成立時（未成功時はタイムアウト）まで表示する。')
             comparisons = prediction_comparison(output, rows, manifest)
             lines.extend(['', '### 姿勢の行き過ぎの予測との照合', '',
                           '予測は max(0, ω²/(2aω)−ωT)。T=max(0.20, kL/v所望)。最終姿勢を前方注視点が参照しているときの最初の減速周期を選び、その直前の適用角速度ωと、その周期のLを使う。',
@@ -251,8 +251,9 @@ def report(output, rows, manifest):
         lines.append('比較手法追加時の過去の照合記録はmanifest.jsonのmethod_comparisonとmethod_changes.csvに保持。今回の再集計とは別の履歴である。')
     lines.append('共通指標表で指令制約違反の列を省略した表は、全手法・全条件で違反率0%。図は従来の書体・寸法を維持。実機試行は0件。')
     lines = [line for i, line in enumerate(lines) if line or i == 0 or lines[i-1]]
-    if len(lines) > 240:
-        raise RuntimeError(f'REPORT.md would exceed 240 lines: {len(lines)}')
+    if manifest.get('full_run_evaluation'):
+        from .access_comparison import comparison_lines
+        lines.extend(comparison_lines(output, rows, manifest))
     (output/'REPORT.md').write_text('\n'.join(lines)+'\n')
 
 
@@ -283,8 +284,13 @@ def compare_baseline(output, manifest, baseline):
         if trajectory.exists():
             with np.load(trajectory) as history:
                 poses=history['poses']
-                mask=(poses[:,0]>=-1e-10)&(poses[:,0]<=trial['condition']['evaluation_end'])
-                a['eval_mean_position_error_m']=float(history['position_errors'][mask].mean()) if mask.any() else None
+                # Preserve saved baseline metrics and their original support.
+                # Very old baselines without this field used a sample mean.
+                end=before['spec'].get('evaluation_end')
+                mask=(np.ones(len(poses),dtype=bool) if end is None else
+                      (poses[:,0]>=-1e-10)&(poses[:,0]<=end))
+                a.setdefault('eval_mean_position_error_m',
+                             float(history['position_errors'][mask].mean()) if mask.any() else None)
                 a['goal_overshoot_m']=max(0.,float(poses[:,0].max()-history['path'][-1,0]))
         # Summary identity/labels change with the suite; compare scientific values only.
         ignored={'test','part','trial_id','condition_id','scenario','method','parameter','value','seed'}

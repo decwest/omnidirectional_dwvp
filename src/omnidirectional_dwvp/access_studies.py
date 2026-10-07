@@ -32,7 +32,7 @@ def numerical_hash():
 def make_condition(test, part, scenario, method, config, seed, settings, parameter='', value=None):
     return dict(test=test, part=part, scenario=scenario, method=method, config=asdict(config), seed=seed,
                 parameter=parameter, value=value,
-                evaluation_end=min(settings['evaluation_end'], settings['path_length'] - config.approach_distance - settings['path_spacing']) if config.approach_distance > 0 else settings['evaluation_end'],
+                evaluation_end=None,
                 path_length=settings['path_length'], path_spacing=settings['path_spacing'],
                 ramp_start=settings['ramp_start'], obstacles=settings['obstacles'] if scenario['kind']=='obstacles' else [])
 
@@ -211,7 +211,7 @@ def run(study, output, config, settings, seed=0, force=False, config_path=None, 
                     notes=['All observations, including failed/timeout runs, remain in aggregates with finite counts.',
                            'Noise is independent Gaussian pose observation noise at every control cycle; plant state is exact.',
                            'Sample standard deviation (ddof=1); zero-noise seeds repeat deterministic trials.',
-                           'Error evaluation ends before each condition-specific goal-slowdown boundary. Full durations include terminal settling.',
+                           'Errors include all saved poses from start through the goal criterion or timeout, including terminal settling.',
                            'PP uses position only, including the final positional tangent for terminal yaw.',
                            'Raw mixed-unit solver objective is unchanged; reported direction angles use per-axis normalization.'])
     target = output/('manifest.json' if study=='all' else f'manifest_{study}.json')
